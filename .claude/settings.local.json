@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --check scripts/update-data.mjs)",
+      "Bash(node --check scripts/serve.mjs)",
+      "Bash(node --check app.js)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://127.0.0.1:4173/)",
+      "Bash(curl -s http://127.0.0.1:4173/)",
+      "Bash(netstat -ano)",
+      "Bash(node *)",
+      "Bash(npm run *)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:akshare.akfamily.xyz)",
+      "Read(//tmp/**)"
+    ]
+  }
+}
