@@ -4,6 +4,7 @@
       <div class="topbar-brand">
         <h1>期货数据</h1>
         <router-link class="topbar-menu" :to="{ name: 'home' }">期货</router-link>
+        <router-link class="topbar-menu" :to="{ name: 'stocks' }">股票</router-link>
         <router-link class="topbar-menu active" :to="{ name: 'options' }">期权</router-link>
         <span class="topbar-date">{{ optionTradeDate || store.meta.tradeDate || '--' }}</span>
       </div>

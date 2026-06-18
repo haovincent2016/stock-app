@@ -90,6 +90,19 @@ export function getLimitStatus(item) {
   return null
 }
 
+export function sortCommodityRows(commodities, pinnedSymbols = [], sort = 'change') {
+  const pinned = new Set(pinnedSymbols ?? [])
+  return (commodities ?? []).slice().sort((a, b) => {
+    const aPin = pinned.has(a.symbol) ? 0 : 1
+    const bPin = pinned.has(b.symbol) ? 0 : 1
+    if (aPin !== bPin) return aPin - bPin
+    if (sort === 'range') return (b.today?.rangePct ?? -1) - (a.today?.rangePct ?? -1)
+    if (sort === 'williams') return (b.metrics?.williamsR ?? -100) - (a.metrics?.williamsR ?? -100)
+    if (sort === 'volume') return (b.today?.volume ?? -1) - (a.today?.volume ?? -1)
+    return Math.abs(b.today?.changePct ?? 0) - Math.abs(a.today?.changePct ?? 0)
+  })
+}
+
 export function buildOptionMovers(commodities, limit = 8) {
   return (commodities ?? [])
     .flatMap((item) => buildOptionCandidates(item))

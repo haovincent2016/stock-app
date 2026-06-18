@@ -4,7 +4,8 @@
       <div class="topbar-brand">
         <h1>期货数据</h1>
         <router-link class="topbar-menu active" :to="{ name: 'home' }">期货</router-link>
-        <router-link class="topbar-menu" :to="{ name: 'options' }">期权</router-link>
+        <router-link class="topbar-menu" :to="{ name: 'stocks' }">股票</router-link>
+        <!-- <router-link class="topbar-menu" :to="{ name: 'options' }">期权</router-link> -->
         <span class="topbar-date">{{ store.meta.tradeDate || '--' }}</span>
       </div>
       <div class="topbar-actions">
@@ -121,6 +122,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useMarketStore } from '../stores/market'
 import { formatNumber, compactNumber, formatPct, formatSignedPct, changeClass, rankColor, wrLeft } from '../utils/format'
+import { sortCommodityRows } from '../utils/data'
 
 const store = useMarketStore()
 const category = ref('全部')
@@ -132,22 +134,13 @@ onMounted(() => store.load())
 const categories = computed(() => ['全部', ...new Set(store.commodities.map((item) => item.category))])
 const filteredCommodities = computed(() => {
   const needle = search.value.trim().toLowerCase()
-  const pinned = store.pinnedSymbols
-  return store.commodities
+  const rows = store.commodities
     .filter((item) => {
       const matchesCategory = category.value === '全部' || item.category === category.value
       const haystack = [item.name, item.symbol, item.exchange, item.category].join(' ').toLowerCase()
       return matchesCategory && (!needle || haystack.includes(needle))
     })
-    .sort((a, b) => {
-      const aPin = pinned.includes(a.symbol) ? 0 : 1
-      const bPin = pinned.includes(b.symbol) ? 0 : 1
-      if (aPin !== bPin) return aPin - bPin
-      if (sort.value === 'range') return (b.today?.rangePct ?? -1) - (a.today?.rangePct ?? -1)
-      if (sort.value === 'williams') return (b.metrics?.williamsR ?? -100) - (a.metrics?.williamsR ?? -100)
-      if (sort.value === 'volume') return (b.today?.volume ?? -1) - (a.today?.volume ?? -1)
-      return Math.abs(b.today?.changePct ?? 0) - Math.abs(a.today?.changePct ?? 0)
-    })
+  return sortCommodityRows(rows, store.pinnedSymbols, sort.value)
 })
 
 const volatilityRows = computed(() =>

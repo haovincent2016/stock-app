@@ -27,6 +27,23 @@ const sinaHeaders = {
   "User-Agent": "Mozilla/5.0"
 };
 
+const eastmoneyHeaders = {
+  Referer: "https://quote.eastmoney.com/",
+  "User-Agent": "Mozilla/5.0"
+};
+
+const eastmoneyToken = "fa5fd1943c7b386f172d6893dbfba10b";
+const eastmoneySearchToken = "D43BF722C8E33BDC906FB84D85E216E9";
+
+const commonStockIndices = [
+  { secid: "1.000016", code: "000016", name: "上证50" },
+  { secid: "1.000001", code: "000001", name: "上证指数" },
+  { secid: "0.399001", code: "399001", name: "深证成指" },
+  { secid: "0.399006", code: "399006", name: "创业板指" },
+  { secid: "1.000300", code: "000300", name: "沪深300" },
+  { secid: "1.000905", code: "000905", name: "中证500" }
+];
+
 const optionCache = {
   expiresAt: 0,
   payload: null
@@ -48,6 +65,21 @@ const server = createServer(async (request, response) => {
 
   if (pathname === "/api/option-intraday") {
     await serveOptionIntraday(url, response);
+    return;
+  }
+
+  if (pathname === "/api/stock-indices") {
+    await serveStockIndices(response);
+    return;
+  }
+
+  if (pathname === "/api/stock-search") {
+    await serveStockSearch(url, response);
+    return;
+  }
+
+  if (pathname === "/api/stock-detail") {
+    await serveStockDetail(url, response);
     return;
   }
 
@@ -169,6 +201,381 @@ async function serveOptionIntraday(url, response) {
   } catch (error) {
     sendJson(response, 502, { error: error.message || String(error) });
   }
+}
+
+async function serveStockIndices(response) {
+  try {
+    const quotes = await fetchStockQuotes(commonStockIndices.map((row) => row.secid));
+    const rows = commonStockIndices.map((index) => ({
+      ...index,
+      ...(quotes.get(index.secid) ?? {})
+    }));
+    sendJson(response, 200, {
+      fetchedAt: new Date().toISOString(),
+      source: "东方财富实时行情",
+      rows
+    });
+  } catch (error) {
+    sendJson(response, 502, { error: error.message || String(error), rows: [] });
+  }
+}
+
+async function serveStockSearch(url, response) {
+  const query = (url.searchParams.get("q") || "").trim();
+  if (!query || query.length > 40 || /[<>{}\\]/.test(query)) {
+    sendJson(response, 400, { error: "invalid query", rows: [] });
+    return;
+  }
+
+  try {
+    const rows = await searchStocks(query);
+    sendJson(response, 200, {
+      fetchedAt: new Date().toISOString(),
+      source: "东方财富搜索",
+      rows
+    });
+  } catch (error) {
+    const fallback = stockCandidateFromCode(query);
+    if (fallback) {
+      sendJson(response, 200, {
+        fetchedAt: new Date().toISOString(),
+        source: "代码推断",
+        rows: [fallback],
+        warning: error.message || String(error)
+      });
+      return;
+    }
+    sendJson(response, 502, { error: error.message || String(error), rows: [] });
+  }
+}
+
+async function serveStockDetail(url, response) {
+  const secidParam = (url.searchParams.get("secid") || "").trim();
+  const codeParam = (url.searchParams.get("code") || "").trim();
+  const fallback = stockCandidateFromCode(codeParam);
+  const secid = normalizeStockSecid(secidParam) || fallback?.secid;
+
+  if (!secid) {
+    sendJson(response, 400, { error: "invalid stock secid" });
+    return;
+  }
+
+  try {
+    const [quotes, intraday, daily, weekly, monthly, profile, boards] = await Promise.all([
+      fetchStockQuotes([secid]),
+      fetchStockIntraday(secid).catch(() => []),
+      fetchStockKlines(secid, 101, 180),
+      fetchStockKlines(secid, 102, 120),
+      fetchStockKlines(secid, 103, 96),
+      fetchCompanyProfile(secid).catch(() => null),
+      fetchStockBoards(secid).catch(() => [])
+    ]);
+    const quote = quotes.get(secid);
+    if (!quote) throw new Error("stock quote not found");
+
+    sendJson(response, 200, {
+      fetchedAt: new Date().toISOString(),
+      source: "东方财富行情",
+      quote,
+      profile,
+      boards,
+      klines: {
+        intraday,
+        daily,
+        weekly,
+        monthly
+      }
+    });
+  } catch (error) {
+    sendJson(response, 502, { error: error.message || String(error) });
+  }
+}
+
+async function searchStocks(query) {
+  const target = new URL("https://searchapi.eastmoney.com/api/suggest/get");
+  target.searchParams.set("input", query);
+  target.searchParams.set("type", "14");
+  target.searchParams.set("token", eastmoneySearchToken);
+  target.searchParams.set("count", "12");
+
+  const payload = await fetchJson(target.toString(), { headers: eastmoneyHeaders, timeoutMs: 8_000 });
+  const rawRows = [
+    ...(payload?.QuotationCodeTable?.Data ?? []),
+    ...(payload?.Data ?? []),
+    ...(payload?.data ?? [])
+  ];
+  const rows = rawRows
+    .map(stockSearchCandidateFromRow)
+    .filter(Boolean)
+    .filter((row) => isStockLikeCode(row.code))
+    .slice(0, 10);
+
+  if (rows.length) return rows;
+  const fallback = stockCandidateFromCode(query);
+  return fallback ? [fallback] : [];
+}
+
+async function fetchStockQuotes(secids) {
+  const cleanSecids = unique((secids ?? []).map(normalizeStockSecid).filter(Boolean));
+  const result = new Map();
+  if (!cleanSecids.length) return result;
+
+  const target = new URL("https://push2.eastmoney.com/api/qt/ulist.np/get");
+  target.searchParams.set("fltt", "2");
+  target.searchParams.set("invt", "2");
+  target.searchParams.set("ut", eastmoneyToken);
+  target.searchParams.set("fields", [
+    "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f12", "f13", "f14",
+    "f15", "f16", "f17", "f18", "f20", "f21", "f23", "f24", "f25", "f26", "f57", "f58",
+    "f112", "f113", "f114", "f115", "f116", "f117", "f124", "f152"
+  ].join(","));
+  target.searchParams.set("secids", cleanSecids.join(","));
+
+  const payload = await fetchJson(target.toString(), { headers: eastmoneyHeaders, timeoutMs: 8_000 });
+  const rows = payload?.data?.diff;
+  if (!Array.isArray(rows)) return result;
+
+  for (const row of rows) {
+    const quote = normalizeStockQuote(row);
+    if (quote) result.set(quote.secid, quote);
+  }
+  return result;
+}
+
+async function fetchStockKlines(secid, klt, limit = 160) {
+  const cleanSecid = normalizeStockSecid(secid);
+  if (!cleanSecid) return [];
+  const target = new URL("https://push2his.eastmoney.com/api/qt/stock/kline/get");
+  target.searchParams.set("secid", cleanSecid);
+  target.searchParams.set("ut", eastmoneyToken);
+  target.searchParams.set("fields1", "f1,f2,f3,f4,f5,f6");
+  target.searchParams.set("fields2", "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61");
+  target.searchParams.set("klt", String(klt));
+  target.searchParams.set("fqt", "1");
+  target.searchParams.set("beg", "0");
+  target.searchParams.set("end", "20500101");
+  target.searchParams.set("lmt", String(limit));
+
+  const payload = await fetchJson(target.toString(), { headers: eastmoneyHeaders, timeoutMs: 8_000 });
+  const rows = payload?.data?.klines;
+  if (!Array.isArray(rows)) return [];
+  return rows.map(parseStockKline).filter(Boolean).slice(-limit);
+}
+
+async function fetchStockIntraday(secid) {
+  const cleanSecid = normalizeStockSecid(secid);
+  if (!cleanSecid) return [];
+  const target = new URL("https://push2.eastmoney.com/api/qt/stock/trends2/get");
+  target.searchParams.set("fields1", "f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13");
+  target.searchParams.set("fields2", "f51,f52,f53,f54,f55,f56,f57,f58");
+  target.searchParams.set("ut", eastmoneyToken);
+  target.searchParams.set("ndays", "1");
+  target.searchParams.set("iscr", "0");
+  target.searchParams.set("secid", cleanSecid);
+
+  const payload = await fetchJson(target.toString(), { headers: eastmoneyHeaders, timeoutMs: 8_000 });
+  const trends = payload?.data?.trends;
+  if (!Array.isArray(trends)) return [];
+  const previousClose = toNumber(payload?.data?.preClose ?? payload?.data?.prePrice);
+  return trends
+    .map((line) => {
+      const parts = String(line || "").split(",");
+      if (parts.length < 3) return null;
+      const datetime = parts[0] || "";
+      const price = toNumber(parts[2]) ?? toNumber(parts[1]);
+      return {
+        datetime,
+        date: datetime.split(" ")[0] || null,
+        time: (datetime.split(" ")[1] || datetime).slice(0, 5),
+        price,
+        open: toNumber(parts[1]),
+        high: toNumber(parts[3]),
+        low: toNumber(parts[4]),
+        volume: toNumber(parts[5]),
+        amount: toNumber(parts[6]),
+        average: toNumber(parts[7]),
+        previousClose
+      };
+    })
+    .filter((row) => row?.time && Number.isFinite(row.price));
+}
+
+async function fetchCompanyProfile(secid) {
+  const cleanSecid = normalizeStockSecid(secid);
+  if (!cleanSecid) return null;
+  const [market, code] = cleanSecid.split(".");
+  const prefix = code.startsWith("8") || code.startsWith("4") ? "BJ" : market === "1" ? "SH" : "SZ";
+  const target = new URL("https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/PageAjax");
+  target.searchParams.set("code", `${prefix}${code}`);
+  const payload = await fetchJson(target.toString(), {
+    headers: {
+      ...eastmoneyHeaders,
+      Referer: `https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/Index?type=web&code=${prefix}${code}`
+    },
+    timeoutMs: 8_000
+  });
+  const row = payload?.jbzl?.[0] ?? payload?.gsgk?.[0] ?? null;
+  if (!row) return null;
+  return {
+    companyName: row.ORG_NAME || row.COMPANY_NAME || row.SECURITY_NAME_ABBR || "",
+    shortName: row.SECURITY_NAME_ABBR || "",
+    industry: row.INDUSTRYCSRC1 || row.INDUSTRY_NAME || row.INDUSTRY || "",
+    subIndustry: row.INDUSTRYCSRC2 || "",
+    listingDate: row.LISTING_DATE || row.LIST_DATE || "",
+    province: row.PROVINCE || row.REGION || "",
+    chairman: row.CHAIRMAN || "",
+    manager: row.PRESIDENT || row.GENERAL_MANAGER || "",
+    secretary: row.SECRETARY || "",
+    officeAddress: row.OFFICE_ADDRESS || "",
+    website: row.WEB_SITE || row.WEBSITE || "",
+    mainBusiness: row.MAIN_BUSINESS || row.BUSINESS_SCOPE || ""
+  };
+}
+
+async function fetchStockBoards(secid) {
+  const secucode = stockSecucode(secid);
+  if (!secucode) return [];
+  const target = new URL("https://datacenter.eastmoney.com/securities/api/data/v1/get");
+  target.searchParams.set("reportName", "RPT_F10_CORETHEME_BOARDTYPE");
+  target.searchParams.set("columns", "SECUCODE,SECURITY_CODE,SECURITY_NAME_ABBR,NEW_BOARD_CODE,BOARD_NAME,BOARD_TYPE,SELECTED_BOARD_REASON");
+  target.searchParams.set("filter", `(SECUCODE="${secucode}")`);
+  target.searchParams.set("pageNumber", "1");
+  target.searchParams.set("pageSize", "80");
+  target.searchParams.set("sortTypes", "1");
+  target.searchParams.set("sortColumns", "BOARD_RANK");
+
+  const payload = await fetchJson(target.toString(), {
+    headers: {
+      ...eastmoneyHeaders,
+      Referer: `https://emweb.securities.eastmoney.com/PC_HSF10/CoreConception/Index?type=web&code=${stockProfileCode(secid)}`
+    },
+    timeoutMs: 8_000
+  });
+  const rows = payload?.result?.data;
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map((row) => ({
+      code: row.NEW_BOARD_CODE || row.BOARD_CODE || "",
+      name: row.BOARD_NAME || "",
+      type: row.BOARD_TYPE || "其他",
+      reason: row.SELECTED_BOARD_REASON || ""
+    }))
+    .filter((row) => row.name);
+}
+
+function stockSecucode(secid) {
+  const cleanSecid = normalizeStockSecid(secid);
+  if (!cleanSecid) return "";
+  const [market, code] = cleanSecid.split(".");
+  const suffix = code.startsWith("8") || code.startsWith("4") ? "BJ" : market === "1" ? "SH" : "SZ";
+  return `${code}.${suffix}`;
+}
+
+function stockProfileCode(secid) {
+  const secucode = stockSecucode(secid);
+  if (!secucode) return "";
+  const [code, suffix] = secucode.split(".");
+  return `${suffix}${code}`;
+}
+
+function stockSearchCandidateFromRow(row) {
+  const code = String(row.Code || row.SecurityCode || row.SECURITY_CODE || row.code || "").trim();
+  const quoteId = String(row.QuoteID || row.QuoteIDStr || row.quoteId || row.secid || "").trim();
+  const secid = normalizeStockSecid(quoteId) || stockCandidateFromCode(code)?.secid;
+  if (!code || !secid) return null;
+  const name = String(row.Name || row.SecurityName || row.SECURITY_NAME_ABBR || row.name || code).trim();
+  const market = secid.split(".")[0];
+  return {
+    secid,
+    code,
+    name,
+    exchange: stockExchangeLabel(market, code),
+    type: row.SecurityTypeName || row.TypeName || row.type || "股票"
+  };
+}
+
+function stockCandidateFromCode(value) {
+  const code = String(value || "").trim().replace(/^(SH|SZ|BJ)/i, "");
+  if (!isStockLikeCode(code)) return null;
+  const market = code.startsWith("6") || code.startsWith("9") ? "1" : "0";
+  return {
+    secid: `${market}.${code}`,
+    code,
+    name: code,
+    exchange: stockExchangeLabel(market, code),
+    type: "股票"
+  };
+}
+
+function normalizeStockSecid(value) {
+  const text = String(value || "").trim();
+  const direct = text.match(/^([01])\.(\d{6})$/);
+  if (direct) return `${direct[1]}.${direct[2]}`;
+  const code = text.replace(/^(SH|SZ|BJ)/i, "");
+  return stockCandidateFromCode(code)?.secid ?? null;
+}
+
+function isStockLikeCode(code) {
+  return /^[03468]\d{5}$/.test(String(code || ""));
+}
+
+function stockExchangeLabel(market, code) {
+  if (code?.startsWith("8") || code?.startsWith("4")) return "BJ";
+  return market === "1" ? "SH" : "SZ";
+}
+
+function normalizeStockQuote(row) {
+  const code = String(row.f12 || row.f57 || "").trim();
+  const market = String(row.f13 ?? "");
+  if (!code || !market) return null;
+  const secid = `${market}.${code}`;
+  return {
+    secid,
+    code,
+    name: String(row.f14 || row.f58 || code),
+    exchange: stockExchangeLabel(market, code),
+    latestPrice: toNumber(row.f2),
+    changePct: pctNumber(row.f3),
+    change: toNumber(row.f4),
+    volume: toNumber(row.f5),
+    amount: toNumber(row.f6),
+    amplitudePct: pctNumber(row.f7),
+    turnoverPct: pctNumber(row.f8),
+    peDynamic: toNumber(row.f9),
+    volumeRatio: toNumber(row.f10),
+    high: toNumber(row.f15),
+    low: toNumber(row.f16),
+    open: toNumber(row.f17),
+    previousClose: toNumber(row.f18),
+    totalMarketCap: toNumber(row.f20),
+    floatMarketCap: toNumber(row.f21),
+    pb: toNumber(row.f23),
+    changePct60Day: pctNumber(row.f24),
+    changePctYtd: pctNumber(row.f25),
+    listingDate: String(row.f26 || ""),
+    peTtm: toNumber(row.f115 ?? row.f114),
+    marketCap: toNumber(row.f116 ?? row.f20),
+    floatMarketCap2: toNumber(row.f117 ?? row.f21),
+    timestamp: Number.isFinite(toNumber(row.f124)) ? new Date(toNumber(row.f124) * 1000).toISOString() : null
+  };
+}
+
+function parseStockKline(line) {
+  const parts = String(line || "").split(",");
+  if (parts.length < 7) return null;
+  return {
+    date: parts[0],
+    open: toNumber(parts[1]),
+    close: toNumber(parts[2]),
+    high: toNumber(parts[3]),
+    low: toNumber(parts[4]),
+    volume: toNumber(parts[5]),
+    amount: toNumber(parts[6]),
+    amplitudePct: pctNumber(parts[7]),
+    changePct: pctNumber(parts[8]),
+    change: toNumber(parts[9]),
+    turnoverPct: pctNumber(parts[10])
+  };
 }
 
 async function fetchFuturesIntraday(symbol) {
@@ -564,6 +971,10 @@ async function fetchText(url, options = {}) {
   }
 }
 
+async function fetchJson(url, options = {}) {
+  return parseWrappedJson(await fetchText(url, options));
+}
+
 function parseWrappedJson(text) {
   const cleaned = text.replace(/^\/\*[\s\S]*?\*\//, "").trim();
   try {
@@ -590,6 +1001,11 @@ function toNumber(value) {
   if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
+}
+
+function pctNumber(value) {
+  const number = toNumber(value);
+  return Number.isFinite(number) ? number / 100 : null;
 }
 
 function unique(values) {

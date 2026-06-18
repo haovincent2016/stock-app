@@ -246,7 +246,7 @@
         <header class="topbar">
           <div>
             <p class="eyebrow">Futures Daily</p>
-            <h1>期货每日清单</h1>
+            <h1>每日资讯</h1>
           </div>
           <div class="top-actions">
             <div class="date-chip">{{ store.meta.tradeDate || '--' }}</div>

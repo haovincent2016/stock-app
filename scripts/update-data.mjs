@@ -14,6 +14,7 @@ const commodities = [
   { symbol: "CU0", name: "沪铜连续", category: "有色", exchange: "SHFE", digits: 0, limitPct: 0.10, query: "沪铜 铜库存 供需 期货" },
   { symbol: "AL0", name: "沪铝连续", category: "有色", exchange: "SHFE", digits: 0, limitPct: 0.10, query: "沪铝 电解铝 库存 供需" },
   { symbol: "AO0", name: "氧化铝连续", category: "有色", exchange: "SHFE", digits: 0, limitPct: 0.10, query: "氧化铝 期货 铝土矿 库存 供需" },
+  { symbol: "SS0", name: "不锈钢连续", category: "有色", exchange: "SHFE", digits: 0, limitPct: 0.07, query: "不锈钢 期货 镍铁 库存 供需", contracts: ["SS2607", "SS2608"] },
   { symbol: "SC0", name: "原油连续", category: "能源", exchange: "INE", digits: 1, limitPct: 0.17, query: "原油 期货 EIA OPEC 供需 库存" },
   { symbol: "FU0", name: "燃油连续", category: "能源", exchange: "SHFE", digits: 0, limitPct: 0.17, query: "燃料油 期货 库存 供需 原油" },
   { symbol: "TA0", name: "PTA连续", category: "化工", exchange: "CZCE", digits: 0, limitPct: 0.11, query: "PTA 期货 开工率 库存 供需" },
@@ -47,6 +48,7 @@ const fallbackLimitRules = {
   CU0: { limitPct: 0.10, tickSize: 10 },
   AL0: { limitPct: 0.10, tickSize: 5 },
   AO0: { limitPct: 0.10, tickSize: 1 },
+  SS0: { limitPct: 0.07, tickSize: 5 },
   SC0: { limitPct: 0.17, tickSize: 0.1 },
   FU0: { limitPct: 0.17, tickSize: 1 },
   TA0: { limitPct: 0.11, tickSize: 2 },
@@ -79,6 +81,7 @@ const commodityKeywordMap = {
   CU0: ["沪铜", "精铜", "铜矿", "铜库存", "电解铜"],
   AL0: ["沪铝", "电解铝", "铝锭", "铝水", "铝库存"],
   AO0: ["氧化铝", "铝土矿", "氧化铝库存", "氧化铝期货"],
+  SS0: ["不锈钢", "304", "镍铁", "不锈钢库存", "不锈钢现货"],
   SC0: ["原油", "OPEC", "EIA", "成品油", "WTI", "布伦特"],
   FU0: ["燃料油", "燃油", "高硫燃料油", "低硫燃料油", "船燃", "保税燃料油"],
   TA0: ["PTA", "PX", "聚酯", "织造", "逸盛"],
@@ -100,6 +103,7 @@ const spotKeywordMap = {
   CU0: ["铜", "电解铜", "1#铜"],
   AL0: ["铝", "电解铝", "A00铝"],
   AO0: ["氧化铝"],
+  SS0: ["不锈钢", "304不锈钢"],
   SC0: ["原油", "WTI原油", "布伦特"],
   FU0: ["燃料油", "燃油"],
   TA0: ["PTA", "精对苯二甲酸"],
@@ -141,6 +145,10 @@ const fundamentalProfiles = {
   AO0: {
     supply: ["铝土矿供应、矿石品位和进口到港影响氧化铝产量", "氧化铝厂检修、焙烧和环保约束影响开工", "厂库和港口库存决定现货流通宽松程度"],
     demand: ["电解铝运行产能决定氧化铝刚性需求", "铝厂补库节奏和长单执行影响成交活跃度", "电解铝利润变化会影响原料采购节奏"]
+  },
+  SS0: {
+    supply: ["不锈钢厂排产、检修和新增产能决定供应", "镍铁、铬铁和废不锈钢成本影响利润与开工", "无锡、佛山社会库存和厂库变化反映流通压力"],
+    demand: ["地产、家电、机械和出口订单驱动消费", "下游加工厂开工和原料补库节奏影响成交", "终端补库窗口和现货升贴水验证需求强弱"]
   },
   SC0: {
     supply: ["OPEC+产量政策、美国页岩油和地缘扰动影响供应", "EIA库存、出口和炼厂开工反映供给压力", "进口成本和运费变化影响内盘估值"],
