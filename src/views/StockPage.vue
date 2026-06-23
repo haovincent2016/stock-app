@@ -5,6 +5,8 @@
         <h1>股票数据</h1>
         <router-link class="topbar-menu" :to="{ name: 'home' }">期货</router-link>
         <router-link class="topbar-menu active" :to="{ name: 'stocks' }">股票</router-link>
+        <router-link class="topbar-menu" :to="{ name: 'notes' }">笔记</router-link>
+        <!-- <router-link class="topbar-menu" :to="{ name: 'options' }">期权</router-link> -->
         <span class="topbar-date">{{ indexFetchedAt ? `更新 ${formatTime(indexFetchedAt)}` : '--' }}</span>
       </div>
       <div class="topbar-actions">
