@@ -975,7 +975,7 @@ function latestNewsTitle(row) {
 }
 
 function buildWaveAiAnalysis({ history, weekly, current, priceDigits, williamsR, atr }) {
-  const rows = buildWaveRows(history, current).slice(-90)
+  const rows = buildWaveRows(history, current).slice(-120)
   if (rows.length < 10) {
     return emptyWaveAnalysis('日 K 样本不足，至少需要 10 根有效 K 线后再生成波浪计数。')
   }
@@ -986,38 +986,352 @@ function buildWaveAiAnalysis({ history, weekly, current, priceDigits, williamsR,
     return emptyWaveAnalysis('近期摆动高低点不足，当前更适合先按区间震荡观察。')
   }
 
-  const wavePivots = pivots.slice(-7)
+  const wavePivots = pivots.slice(-9)
   const segments = buildWaveSegments(wavePivots)
   const last = rows.at(-1)
+  const lastPrice = last.close
   const trend = inferWaveDirection(wavePivots, rows, weekly)
-  const phase = classifyWavePhase(segments, trend)
-  const levels = buildWaveLevels(wavePivots, trend, last, priceDigits, atr)
-  const ratio = summarizeWaveRatio(segments, trend)
   const volume = summarizeWaveVolume(rows)
-  const confidence = summarizeWaveConfidence(wavePivots, segments, minMovePct, volume.ratio)
+
+  const primary = buildElliottScenario(wavePivots, segments, trend, lastPrice, priceDigits, atr, 'primary')
+  const alternate = buildElliottScenario(wavePivots, segments, trend, lastPrice, priceDigits, atr, 'alternate')
+  const fibMatrix = buildFibonacciMatrix(wavePivots, segments, trend, lastPrice, priceDigits)
+  const confidence = summarizeWaveConfidence(wavePivots, segments, minMovePct, volume.ratio, primary)
+  const timeRef = buildTimeReference(wavePivots, rows)
+
   const scope = `${last.isLive ? '截至今日盘中' : '截至最新交易日'} · ${last.date}`
   const direction = trend === 'up' ? '上行' : trend === 'down' ? '下行' : '震荡'
 
+  const summary = buildWaveSummary(primary, alternate, fibMatrix, direction, lastPrice, priceDigits)
+
   return {
     scope,
-    label: phase.label,
-    biasClass: phase.biasClass,
-    summary: `${direction}结构处于${phase.label}，${phase.description}。关键${levels.guardLabel}在 ${levels.guardText}，${levels.targetLabel}关注 ${levels.targetText}。`,
+    label: primary.label,
+    biasClass: primary.biasClass,
+    summary,
     sketch: buildWaveSketch(wavePivots, priceDigits),
-    points: labelWavePoints(wavePivots, priceDigits),
+    points: labelWavePoints(wavePivots, priceDigits, primary),
     signals: [
-      { label: '结构', value: phase.shortLabel, meta: phase.meta, class: phase.class },
-      { label: '比例', value: ratio.value, meta: ratio.meta, class: ratio.class },
-      { label: levels.targetLabel, value: levels.targetText, meta: levels.targetMeta, class: levels.targetClass },
+      { label: '主选浪型', value: primary.shortLabel, meta: primary.meta, class: primary.class },
+      { label: '当前阶段', value: primary.phaseLabel, meta: primary.phaseMeta, class: primary.phaseClass },
+      { label: '斐波那契', value: fibMatrix.nearestLabel, meta: fibMatrix.nearestMeta, class: fibMatrix.nearestClass },
       { label: '可信度', value: confidence.value, meta: confidence.meta, class: confidence.class }
     ],
     details: [
-      `波浪：最近 ${wavePivots.length} 个摆动点构成${direction}计数，当前腿累计 ${formatSignedPct(segments.at(-1)?.changePct)}。`,
-      `比例：${ratio.detail}；若价格${levels.invalidationText}，当前波浪计数需要重置。`,
-      `量价：${volume.detail}`,
-      `指标：W%R ${Number.isFinite(williamsR) ? williamsR.toFixed(1) : '--'}，处于${williamsText(williamsR)}；第 5 浪或 C 浪阶段需防动能衰竭。`
+      `【主选】${primary.label}：${primary.description}`,
+      `  → 目标位 ${primary.targetText}，失效位 ${primary.invalidationText}`,
+      `  → 后续路径：${primary.pathDescription}`,
+      `【备选】${alternate.label}：${alternate.description}`,
+      `  → 目标位 ${alternate.targetText}，失效位 ${alternate.invalidationText}`,
+      `  → 后续路径：${alternate.pathDescription}`,
+      `【斐波那契矩阵】${fibMatrix.detail}`,
+      `【量价配合】${volume.detail}`,
+      `【时间参考】${timeRef.detail}`,
+      `【指标辅助】W%R ${Number.isFinite(williamsR) ? williamsR.toFixed(1) : '--'}，${williamsText(williamsR)}；${primary.indicatorNote}`
     ]
   }
+}
+
+function buildElliottScenario(pivots, segments, trend, lastPrice, priceDigits, atr, mode) {
+  const isAlt = mode === 'alternate'
+  const directionText = trend === 'up' ? '上行' : trend === 'down' ? '下行' : '震荡'
+  const trendLegs = segments.filter(s => s.direction === trend).length
+  const counterLegs = segments.filter(s => s.direction !== trend && s.direction !== 'flat').length
+  const lastSeg = segments.at(-1)
+  const prevSeg = segments.at(-2)
+  const isMotive = lastSeg?.direction === trend
+
+  const highs = pivots.filter(p => p.type === 'high')
+  const lows = pivots.filter(p => p.type === 'low')
+  const lastHigh = highs.at(-1)
+  const lastLow = lows.at(-1)
+  const prevHigh = highs.at(-2)
+  const prevLow = lows.at(-2)
+
+  let label, shortLabel, biasClass, classVal, meta, phaseLabel, phaseMeta, phaseClass
+  let description, targetText, invalidationText, pathDescription, indicatorNote
+
+  if (trend === 'flat') {
+    label = '区间震荡'
+    shortLabel = '震荡'
+    biasClass = 'neutral'
+    classVal = 'flat'
+    meta = '方向待确认'
+    phaseLabel = '无明确浪型'
+    phaseMeta = '高低点未形成推动结构'
+    phaseClass = 'flat'
+    description = '当前价格在区间内运行，尚未形成有效的推动浪结构，建议等待方向突破。'
+    targetText = isAlt
+      ? `${formatNumber(lastLow?.price ?? lastPrice, priceDigits)}（下边界）`
+      : `${formatNumber(lastHigh?.price ?? lastPrice, priceDigits)}（上边界）`
+    invalidationText = isAlt
+      ? `${formatNumber(lastHigh?.price ?? lastPrice, priceDigits)}（上破转多）`
+      : `${formatNumber(lastLow?.price ?? lastPrice, priceDigits)}（下破转空）`
+    pathDescription = isAlt
+      ? '若跌破区间下沿，可能开启下行推动浪（1-2-3-4-5），首个目标为区间幅度的1.272倍扩展'
+      : '若突破区间上沿，可能开启上行推动浪（1-2-3-4-5），首个目标为区间幅度的1.272倍扩展'
+    indicatorNote = '震荡区间内指标信号反复，不宜过度依赖。'
+  } else if (isMotive) {
+    if (isAlt) {
+      label = `${directionText}C浪反弹`
+      shortLabel = 'C浪'
+      biasClass = 'neutral'
+      classVal = 'flat'
+      meta = '修正浪C'
+      phaseLabel = 'C浪末段'
+      phaseMeta = '可能接近修正终点'
+      phaseClass = 'flat'
+      description = '当前上涨可能是更大级别调整浪的C浪，而非新推动浪的起点。C浪通常与A浪等长或0.618倍关系。'
+      const aWaveSize = Math.abs((prevHigh?.price ?? lastPrice) - (prevLow?.price ?? lastPrice))
+      const cTarget = (trend === 'up' ? (lastLow?.price ?? lastPrice) : (lastHigh?.price ?? lastPrice)) + (trend === 'up' ? 1 : -1) * aWaveSize
+      targetText = formatNumber(cTarget, priceDigits)
+      invalidationText = trend === 'up'
+        ? `${formatNumber(lastLow?.price ?? lastPrice, priceDigits)}（C浪失效位）`
+        : `${formatNumber(lastHigh?.price ?? lastPrice, priceDigits)}（C浪失效位）`
+      pathDescription = 'C浪完成后将迎来反向推动浪，届时需重新计数。C浪终点附近可能出现量能萎缩和指标背离。'
+      indicatorNote = 'C浪末期常出现量价背离和指标超买/超卖，关注背离信号。'
+    } else {
+      const waveNum = trendLegs <= 1 ? 1 : trendLegs === 2 ? 3 : 5
+      const waveNames = { 1: '第1浪', 3: '第3浪', 5: '第5浪' }
+      label = `${directionText}${waveNames[waveNum]}`
+      shortLabel = `${waveNum}浪`
+      biasClass = trend === 'up' ? 'tight' : 'loose'
+      classVal = trend === 'up' ? 'up' : 'down'
+      meta = `推动浪${waveNum}`
+
+      if (waveNum === 1) {
+        phaseLabel = '1浪延展中'
+        phaseMeta = '新趋势启动'
+        phaseClass = trend === 'up' ? 'up' : 'down'
+        description = '第1浪正在延展，这是新趋势的起点。1浪之后通常跟随较深的2浪回撤（50%-61.8%），可作为二次建仓机会。'
+        const swing0 = Math.abs(pivots[0]?.price - pivots[1]?.price) || Math.abs(lastPrice) * 0.02
+        const ext1 = (trend === 'up' ? 1 : -1) * swing0 * 1.618 + pivots[0].price
+        targetText = formatNumber(ext1, priceDigits)
+        invalidationText = trend === 'up'
+          ? `${formatNumber(pivots[0]?.price ?? lastPrice, priceDigits)}（1浪起点）`
+          : `${formatNumber(pivots[0]?.price ?? lastPrice, priceDigits)}（1浪起点）`
+        pathDescription = '1浪完成后→2浪回撤至1浪的38.2%-61.8%→3浪突破1浪终点加速。2浪回撤是关键加仓点，但若跌破1浪起点则计数失效。'
+        indicatorNote = '1浪启动时成交量应明显放大，持仓量开始增加。'
+      } else if (waveNum === 3) {
+        phaseLabel = '3浪主升'
+        phaseMeta = '趋势最强阶段'
+        phaseClass = trend === 'up' ? 'up' : 'down'
+        description = '第3浪通常是推动浪中最长最强的一浪，价格变化幅度往往是1浪的1.618-2.618倍，伴随成交量放大。'
+        const wave1Size = Math.abs(pivots[1]?.price - pivots[0]?.price) || Math.abs(lastPrice) * 0.02
+        const wave3Target1618 = (trend === 'up' ? 1 : -1) * wave1Size * 1.618 + pivots[2]?.price
+        const wave3Target2618 = (trend === 'up' ? 1 : -1) * wave1Size * 2.618 + pivots[2]?.price
+        targetText = `${formatNumber(wave3Target1618, priceDigits)} ~ ${formatNumber(wave3Target2618, priceDigits)}`
+        invalidationText = trend === 'up'
+          ? `${formatNumber(pivots[2]?.price ?? lastLow?.price ?? lastPrice, priceDigits)}（2浪低点）`
+          : `${formatNumber(pivots[2]?.price ?? lastHigh?.price ?? lastPrice, priceDigits)}（2浪高点）`
+        pathDescription = '3浪延展中→关注1.618倍和2.618倍扩展目标→3浪结束后4浪回撤至3浪的23.6%-38.2%→5浪创新高/低但力度减弱。3浪不应是最短推动浪。'
+        indicatorNote = '3浪应伴随成交量持续放大和持仓量增加，若量能萎缩需警惕3浪提前结束。'
+      } else {
+        phaseLabel = '5浪末段'
+        phaseMeta = '趋势衰竭风险'
+        phaseClass = 'flat'
+        description = '第5浪是推动浪的最后一浪，通常力度弱于3浪，可能出现价格创新高/低但指标背离的"末端背离"现象。'
+        const wave1Size = Math.abs(pivots[1]?.price - pivots[0]?.price) || Math.abs(lastPrice) * 0.02
+        const wave3Size = Math.abs(pivots[3]?.price - pivots[2]?.price) || wave1Size
+        const largerImpulse = Math.max(wave1Size, wave3Size)
+        const wave5Target = (trend === 'up' ? 1 : -1) * largerImpulse * 0.618 + pivots[4]?.price
+        targetText = formatNumber(wave5Target, priceDigits)
+        invalidationText = trend === 'up'
+          ? `${formatNumber(pivots[4]?.price ?? lastLow?.price ?? lastPrice, priceDigits)}（4浪低点，5浪不能跌破）`
+          : `${formatNumber(pivots[4]?.price ?? lastHigh?.price ?? lastPrice, priceDigits)}（4浪高点，5浪不能突破）`
+        pathDescription = '5浪完成后→ABC调整浪回撤整个推动浪的38.2%-61.8%→A浪5小波→B浪3小波→C浪5小波。5浪末端常出现量价背离和指标超买/超卖。'
+        indicatorNote = '5浪阶段重点关注量价背离和W%R超买/超卖信号，背离出现时趋势反转概率增大。'
+      }
+    }
+  } else {
+    if (isAlt) {
+      label = `${directionText}新1浪启动`
+      shortLabel = '新1浪'
+      biasClass = trend === 'up' ? 'tight' : 'loose'
+      classVal = trend === 'up' ? 'up' : 'down'
+      meta = '新推动浪起点'
+      phaseLabel = '1浪初期'
+      phaseMeta = '可能正在启动新推动浪'
+      phaseClass = trend === 'up' ? 'up' : 'down'
+      description = '当前回撤可能已经结束，新推动浪的1浪正在启动。若价格突破前一个摆动高点/低点，将确认新推动浪。'
+      const swingSize = Math.abs(lastHigh?.price - lastLow?.price) || Math.abs(lastPrice) * 0.02
+      const newTarget = (trend === 'up' ? 1 : -1) * swingSize * 1.272 + (trend === 'up' ? lastLow?.price : lastHigh?.price)
+      targetText = formatNumber(newTarget, priceDigits)
+      invalidationText = trend === 'up'
+        ? `${formatNumber(lastLow?.price ?? lastPrice, priceDigits)}（回撤低点）`
+        : `${formatNumber(lastHigh?.price ?? lastPrice, priceDigits)}（回撤高点）`
+      pathDescription = '1浪启动→2浪回撤38.2%-61.8%→3浪加速突破。若1浪突破前高/低点，则确认新推动浪开始。'
+      indicatorNote = '1浪启动时成交量应放大，W%R从超买/超卖区域回归中性。'
+    } else {
+      const correctionNum = counterLegs <= 1 ? 2 : 4
+      const correctionNames = { 2: '第2浪回撤', 4: '第4浪整理' }
+      label = `${directionText}${correctionNames[correctionNum]}`
+      shortLabel = `${correctionNum}浪`
+      biasClass = 'neutral'
+      classVal = 'flat'
+      meta = `修正浪${correctionNum}`
+
+      if (correctionNum === 2) {
+        phaseLabel = '2浪回撤中'
+        phaseMeta = '关键回撤区域'
+        phaseClass = 'flat'
+        const wave1Size = Math.abs(pivots[1]?.price - pivots[0]?.price) || Math.abs(lastPrice) * 0.02
+        const retracement382 = (trend === 'up' ? 1 : -1) * wave1Size * 0.382 + (trend === 'up' ? pivots[1]?.price : pivots[1]?.price)
+        const retracement618 = (trend === 'up' ? 1 : -1) * wave1Size * 0.618 + (trend === 'up' ? pivots[1]?.price : pivots[1]?.price)
+        const retracement500 = (trend === 'up' ? 1 : -1) * wave1Size * 0.5 + (trend === 'up' ? pivots[1]?.price : pivots[1]?.price)
+        description = `第2浪正在回撤1浪的涨幅/跌幅，关键回撤区域在38.2%（${formatNumber(retracement382, priceDigits)}）、50%（${formatNumber(retracement500, priceDigits)}）和61.8%（${formatNumber(retracement618, priceDigits)}）。2浪回撤不能超过1浪起点。`
+        targetText = `${formatNumber(retracement500, priceDigits)} ~ ${formatNumber(retracement618, priceDigits)}`
+        invalidationText = trend === 'up'
+          ? `${formatNumber(pivots[0]?.price ?? lastPrice, priceDigits)}（1浪起点，2浪不能跌破）`
+          : `${formatNumber(pivots[0]?.price ?? lastPrice, priceDigits)}（1浪起点，2浪不能突破）`
+        pathDescription = '2浪回撤至38.2%-61.8%区域→若企稳则3浪启动→3浪目标为1浪的1.618-2.618倍。2浪常见锯齿形（5-3-5）或平台形（3-3-5）结构。'
+        indicatorNote = '2浪回撤末期W%R进入超卖/超买区域，成交量萎缩至地量时反转概率增大。'
+      } else {
+        phaseLabel = '4浪整理中'
+        phaseMeta = '复杂修正阶段'
+        phaseClass = 'flat'
+        const wave3Size = Math.abs(pivots[3]?.price - pivots[2]?.price) || Math.abs(lastPrice) * 0.02
+        const retracement236 = (trend === 'up' ? 1 : -1) * wave3Size * 0.236 + (trend === 'up' ? pivots[3]?.price : pivots[3]?.price)
+        const retracement382 = (trend === 'up' ? 1 : -1) * wave3Size * 0.382 + (trend === 'up' ? pivots[3]?.price : pivots[3]?.price)
+        description = `第4浪是3浪后的修正，回撤幅度通常为3浪的23.6%（${formatNumber(retracement236, priceDigits)}）到38.2%（${formatNumber(retracement382, priceDigits)}）。4浪不能进入1浪价格区域（交替规则）。4浪常形成三角形或平台形。`
+        targetText = `${formatNumber(retracement236, priceDigits)} ~ ${formatNumber(retracement382, priceDigits)}`
+        invalidationText = trend === 'up'
+          ? `${formatNumber(pivots[1]?.price ?? lastPrice, priceDigits)}（1浪高点，4浪不能跌破）`
+          : `${formatNumber(pivots[1]?.price ?? lastPrice, priceDigits)}（1浪低点，4浪不能突破）`
+        pathDescription = '4浪整理→5浪延展但力度减弱→5浪完成后ABC调整。4浪常比2浪复杂（交替规则），若2浪简单则4浪可能为三角形。'
+        indicatorNote = '4浪整理期间成交量逐步萎缩，W%R在中性区域震荡。三角形整理末期关注突破方向。'
+      }
+    }
+  }
+
+  return {
+    label, shortLabel, biasClass, class: classVal, meta,
+    phaseLabel, phaseMeta, phaseClass,
+    description, targetText, invalidationText, pathDescription, indicatorNote
+  }
+}
+
+function buildFibonacciMatrix(pivots, segments, trend, lastPrice, priceDigits) {
+  const highs = pivots.filter(p => p.type === 'high')
+  const lows = pivots.filter(p => p.type === 'low')
+  const lastHigh = highs.at(-1)
+  const lastLow = lows.at(-1)
+  const prevHigh = highs.at(-2)
+  const prevLow = lows.at(-2)
+
+  const lastSeg = segments.at(-1)
+  const prevSeg = segments.at(-2)
+
+  const fibRatios = [0.236, 0.382, 0.5, 0.618, 0.786]
+  const fibExtensions = [0.618, 1.0, 1.272, 1.618, 2.618]
+
+  const retracementLevels = []
+  const extensionLevels = []
+
+  if (lastSeg && Number.isFinite(lastSeg.change) && lastSeg.from.price) {
+    const swingStart = lastSeg.from.price
+    const swingSize = Math.abs(lastSeg.change)
+    const isRetracement = lastSeg.direction !== trend
+
+    if (isRetracement) {
+      for (const ratio of fibRatios) {
+        const price = trend === 'up'
+          ? swingStart + swingSize * (1 - ratio) * (lastSeg.change > 0 ? 1 : -1)
+          : swingStart - swingSize * (1 - ratio) * (lastSeg.change < 0 ? 1 : -1)
+        const actualPrice = lastSeg.change > 0
+          ? lastSeg.to.price + (lastSeg.from.price - lastSeg.to.price) * ratio
+          : lastSeg.to.price + (lastSeg.from.price - lastSeg.to.price) * ratio
+        retracementLevels.push({ ratio, price: actualPrice, label: `${(ratio * 100).toFixed(1)}%` })
+      }
+    }
+
+    if (prevSeg && Number.isFinite(prevSeg.change) && prevSeg.from.price) {
+      const impulseSize = Math.abs(prevSeg.change)
+      for (const ratio of fibExtensions) {
+        const price = trend === 'up'
+          ? (lastHigh?.price ?? lastPrice) + impulseSize * ratio
+          : (lastLow?.price ?? lastPrice) - impulseSize * ratio
+        extensionLevels.push({ ratio, price, label: `${ratio.toFixed(3)}x` })
+      }
+    }
+  }
+
+  let nearestLabel = '--'
+  let nearestMeta = '斐波那契待确认'
+  let nearestClass = 'flat'
+
+  const allLevels = [
+    ...retracementLevels.map(l => ({ ...l, type: '回撤' })),
+    ...extensionLevels.map(l => ({ ...l, type: '扩展' }))
+  ]
+
+  if (allLevels.length && Number.isFinite(lastPrice)) {
+    let minDist = Infinity
+    let nearest = null
+    for (const level of allLevels) {
+      const dist = Math.abs(lastPrice - level.price)
+      if (dist < minDist) {
+        minDist = dist
+        nearest = level
+      }
+    }
+    if (nearest) {
+      const distPct = Math.abs(lastPrice - nearest.price) / Math.max(Math.abs(lastPrice), 1) * 100
+      nearestLabel = nearest.label
+      nearestMeta = `${nearest.type}位 ${formatNumber(nearest.price, priceDigits)}（偏离 ${distPct.toFixed(1)}%）`
+      nearestClass = distPct < 0.5 ? 'up' : distPct < 2 ? 'flat' : 'down'
+    }
+  }
+
+  const retraceStr = retracementLevels.length
+    ? retracementLevels.map(l => `${l.label}=${formatNumber(l.price, priceDigits)}`).join('、')
+    : '暂无'
+  const extStr = extensionLevels.length
+    ? extensionLevels.map(l => `${l.label}=${formatNumber(l.price, priceDigits)}`).join('、')
+    : '暂无'
+
+  return {
+    nearestLabel, nearestMeta, nearestClass,
+    retracementLevels, extensionLevels,
+    detail: `回撤位：${retraceStr}；扩展位：${extStr}`
+  }
+}
+
+function buildTimeReference(pivots, rows) {
+  if (pivots.length < 3) return { detail: '摆动点不足，无法计算时间周期参考。' }
+
+  const fibTimeRatios = [0.382, 0.618, 1.0, 1.618, 2.618]
+  const bars = []
+  for (let i = 1; i < pivots.length; i++) {
+    bars.push(pivots[i].index - pivots[i - 1].index)
+  }
+
+  const lastBarCount = bars.at(-1) || 1
+  const prevBarCount = bars.at(-2) || lastBarCount
+
+  const timeTargets = fibTimeRatios
+    .filter(r => r >= 1)
+    .map(r => Math.round(prevBarCount * r))
+    .filter(t => t > 0)
+
+  const elapsed = lastBarCount
+  const remaining = timeTargets.map(t => t - elapsed).filter(r => r > 0)
+
+  const timeText = remaining.length
+    ? `当前腿已运行 ${elapsed} 根K线，斐波那契时间目标在 ${remaining.slice(0, 3).map(r => `+${r}根`).join('、')}（约${remaining.slice(0, 3).map(r => `${Math.ceil(r / 5)}周`).join('、')}）`
+    : `当前腿已运行 ${elapsed} 根K线，已超过主要斐波那契时间目标，关注变盘窗口`
+
+  return { detail: timeText }
+}
+
+function buildWaveSummary(primary, alternate, fibMatrix, direction, lastPrice, priceDigits) {
+  const dirText = direction === 'up' ? '上行' : direction === 'down' ? '下行' : '震荡'
+  let summary = `【主选】${primary.label}：${primary.description.slice(0, 40)}…目标 ${primary.targetText}，失效 ${primary.invalidationText}。`
+  if (alternate.label !== primary.label) {
+    summary += ` 【备选】${alternate.label}：目标 ${alternate.targetText}，失效 ${alternate.invalidationText}。`
+  }
+  summary += ` 斐波那契最近关键位：${fibMatrix.nearestMeta}。`
+  return summary
 }
 
 function emptyWaveAnalysis(summary) {
@@ -1029,9 +1343,9 @@ function emptyWaveAnalysis(summary) {
     sketch: null,
     points: [],
     signals: [
-      { label: '结构', value: '等待确认', meta: '摆动点不足', class: 'flat' },
-      { label: '比例', value: '--', meta: '斐波那契待确认', class: 'flat' },
-      { label: '关键位', value: '--', meta: '等待有效高低点', class: 'flat' },
+      { label: '主选浪型', value: '等待确认', meta: '摆动点不足', class: 'flat' },
+      { label: '当前阶段', value: '--', meta: '浪型待确认', class: 'flat' },
+      { label: '斐波那契', value: '--', meta: '等待有效高低点', class: 'flat' },
       { label: '可信度', value: '低', meta: '样本不足', class: 'flat' }
     ],
     details: ['等待更多日 K 摆动点后，再给出浪型、斐波那契目标和失效位。']
@@ -1185,98 +1499,6 @@ function inferWaveDirection(pivots, rows, weekly) {
   return buildWaveSegments(pivots).at(-1)?.direction || 'flat'
 }
 
-function classifyWavePhase(segments, trend) {
-  const last = segments.at(-1)
-  if (!last || trend === 'flat') {
-    return {
-      label: '区间震荡',
-      shortLabel: '震荡',
-      biasClass: 'neutral',
-      class: 'flat',
-      meta: '方向待确认',
-      description: '高低点未形成稳定浪型'
-    }
-  }
-
-  const directionText = trend === 'up' ? '上行' : '下行'
-  const trendLegs = segments.filter((segment) => segment.direction === trend).length
-  const isMotive = last.direction === trend
-  const shortLabel = isMotive
-    ? trendLegs <= 1 ? '第1浪' : trendLegs === 2 ? '第3浪' : '第5浪'
-    : trendLegs <= 1 ? '第2浪回撤' : trendLegs === 2 ? '第4浪整理' : 'ABC调整'
-
-  return {
-    label: `${directionText}${shortLabel}`,
-    shortLabel,
-    biasClass: isMotive ? trend === 'up' ? 'tight' : 'loose' : 'neutral',
-    class: isMotive ? trend === 'up' ? 'up' : 'down' : 'flat',
-    meta: `当前腿 ${formatSignedPct(last.changePct)}`,
-    description: isMotive
-      ? '主推浪仍在延展，需用成交量和前高/前低突破确认'
-      : '处在逆向修正腿，重点观察回撤比例和失效位'
-  }
-}
-
-function buildWaveLevels(pivots, trend, last, priceDigits, atr) {
-  const lastPrice = last?.close ?? pivots.at(-1)?.price
-  const highs = pivots.filter((point) => point.type === 'high')
-  const lows = pivots.filter((point) => point.type === 'low')
-  const lastHigh = highs.at(-1)
-  const lastLow = lows.at(-1)
-  const previous = pivots.at(-2)
-  const swing = previous && Number.isFinite(lastPrice)
-    ? Math.abs(lastPrice - previous.price)
-    : Math.abs((lastHigh?.price ?? lastPrice) - (lastLow?.price ?? lastPrice))
-  const projectionStep = Math.max(Number.isFinite(atr) ? atr : 0, swing * 0.618, Math.abs(lastPrice) * 0.006)
-
-  if (trend === 'down') {
-    const support = lastLow?.price ?? lastPrice - projectionStep
-    const resistance = lastHigh?.price ?? lastPrice + projectionStep
-    const target = lastPrice <= support ? lastPrice - projectionStep : support
-    return {
-      guardLabel: '压力',
-      guardText: formatNumber(resistance, priceDigits),
-      targetLabel: '下方目标',
-      targetText: formatNumber(target, priceDigits),
-      targetMeta: `破位看 ${formatNumber(target - projectionStep * 0.618, priceDigits)}`,
-      targetClass: 'down',
-      invalidationText: `突破 ${formatNumber(resistance, priceDigits)}`
-    }
-  }
-
-  const support = lastLow?.price ?? lastPrice - projectionStep
-  const resistance = lastHigh?.price ?? lastPrice + projectionStep
-  const target = lastPrice >= resistance ? lastPrice + projectionStep : resistance
-  return {
-    guardLabel: '支撑',
-    guardText: formatNumber(support, priceDigits),
-    targetLabel: '上方目标',
-    targetText: formatNumber(target, priceDigits),
-    targetMeta: `突破看 ${formatNumber(target + projectionStep * 0.618, priceDigits)}`,
-    targetClass: 'up',
-    invalidationText: `跌破 ${formatNumber(support, priceDigits)}`
-  }
-}
-
-function summarizeWaveRatio(segments, trend) {
-  const last = segments.at(-1)
-  const previous = segments.at(-2)
-  if (!last || !previous || !Number.isFinite(last.change) || !Number.isFinite(previous.change) || previous.change === 0) {
-    return { value: '--', meta: '比例待确认', detail: '尚未形成可比较的相邻浪段', class: 'flat' }
-  }
-
-  const ratio = Math.abs(last.change / previous.change)
-  const isRetracement = last.direction !== trend && previous.direction === trend
-  const value = formatPct(ratio, 1)
-  const label = isRetracement ? retracementLabel(ratio) : extensionLabel(ratio)
-  return {
-    value,
-    meta: label,
-    detail: `${isRetracement ? '当前修正浪' : '当前推动浪'}约为前一浪的 ${value}，属于${label}`,
-    class: ratio >= 0.786 ? 'down' : ratio >= 0.382 ? 'flat' : 'up'
-  }
-}
-
 function summarizeWaveVolume(rows) {
   const last = rows.at(-1)
   const previousRows = rows.slice(-11, -1)
@@ -1293,28 +1515,58 @@ function summarizeWaveVolume(rows) {
   }
 }
 
-function summarizeWaveConfidence(pivots, segments, minMovePct, volumeRatio) {
+function summarizeWaveConfidence(pivots, segments, minMovePct, volumeRatio, primary) {
   const lastMovePct = Math.abs(segments.at(-1)?.changePct ?? 0)
   let score = 0
   if (pivots.length >= 6) score += 1
   if (segments.length >= 4) score += 1
   if (lastMovePct >= minMovePct) score += 1
   if (Number.isFinite(volumeRatio) && volumeRatio > 0.08) score += 1
+  if (primary?.shortLabel === '3浪') score += 1
+  if (primary?.shortLabel === '5浪' || primary?.shortLabel === 'C浪') score -= 0.5
 
-  if (score >= 3) return { value: '较高', meta: '摆动与量能确认', class: 'up' }
+  if (score >= 3.5) return { value: '较高', meta: '摆动、量能与浪型确认', class: 'up' }
   if (score >= 2) return { value: '中等', meta: '结构基本成型', class: 'flat' }
   return { value: '偏低', meta: '等待突破确认', class: 'down' }
 }
 
-function labelWavePoints(pivots, priceDigits) {
-  const labels = ['起点', '1浪', '2浪', '3浪', '4浪', '5浪', '现价']
+function labelWavePoints(pivots, priceDigits, primary) {
+  const waveLabels = buildWavePointLabels(pivots, primary)
   return pivots.map((point, index) => ({
     key: point.key,
-    label: point.isCurrent ? '现价' : labels[index] ?? `${index}浪`,
+    label: point.isCurrent ? '现价' : waveLabels[index] ?? `P${index}`,
     date: dateDayLabel(point.date),
     price: formatNumber(point.price, priceDigits),
     class: point.type === 'high' ? 'pivot-high' : 'pivot-low'
   }))
+}
+
+function buildWavePointLabels(pivots, primary) {
+  const labels = []
+  const shortLabel = primary?.shortLabel ?? ''
+  const trend = primary?.class === 'up' ? 'up' : primary?.class === 'down' ? 'down' : 'flat'
+
+  if (shortLabel === '1浪') {
+    labels.push('0起点', '1浪顶', '2浪底', '3浪顶', '4浪底', '5浪顶')
+  } else if (shortLabel === '2浪') {
+    labels.push('0起点', '1浪端', '2浪端', '3浪端', '4浪端', '5浪端')
+  } else if (shortLabel === '3浪') {
+    labels.push('0起点', '1浪端', '2浪端', '3浪延展中', '4浪端', '5浪端')
+  } else if (shortLabel === '4浪') {
+    labels.push('0起点', '1浪端', '2浪端', '3浪端', '4浪整理中', '5浪端')
+  } else if (shortLabel === '5浪') {
+    labels.push('0起点', '1浪端', '2浪端', '3浪端', '4浪端', '5浪延展中')
+  } else if (shortLabel === 'C浪') {
+    labels.push('A浪起点', 'A浪端', 'B浪端', 'C浪延展中')
+  } else {
+    labels.push('起点', 'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8')
+  }
+
+  while (labels.length < pivots.length) {
+    labels.push(`P${labels.length}`)
+  }
+
+  return labels
 }
 
 function buildWaveSketch(pivots, priceDigits) {
@@ -1329,14 +1581,13 @@ function buildWaveSketch(pivots, priceDigits) {
   const paddedHigh = high + span * 0.12
   const paddedLow = low - span * 0.12
   const paddedSpan = paddedHigh - paddedLow
-  const labels = ['起点', '1浪', '2浪', '3浪', '4浪', '5浪', '现价']
   const denominator = Math.max(1, points.length - 1)
   const nodes = points.map((point, index) => {
     const x = (index / denominator) * 84 + 8
     const y = ((paddedHigh - point.price) / paddedSpan) * 48 + 8
     return {
       key: point.key,
-      label: point.isCurrent ? '现价' : labels[index] ?? `${index}浪`,
+      label: point.isCurrent ? '现价' : `P${index}`,
       price: formatNumber(point.price, priceDigits),
       x: roundChartCoord(x),
       y: roundChartCoord(y),
@@ -1394,21 +1645,6 @@ function firstFinite(...values) {
 
 function clampNumber(value, min, max) {
   return Math.max(min, Math.min(max, value))
-}
-
-function retracementLabel(ratio) {
-  if (!Number.isFinite(ratio)) return '比例待确认'
-  if (ratio < 0.382) return '浅回撤'
-  if (ratio <= 0.618) return '标准回撤'
-  if (ratio <= 0.786) return '深回撤'
-  return '回撤过深'
-}
-
-function extensionLabel(ratio) {
-  if (!Number.isFinite(ratio)) return '比例待确认'
-  if (ratio < 0.618) return '弱延展'
-  if (ratio <= 1.618) return '标准延展'
-  return '加速延展'
 }
 
 function calculateSelectedWilliamsR(currentItem, row) {

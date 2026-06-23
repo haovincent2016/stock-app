@@ -39,7 +39,7 @@ function buildIntradayOption(item) {
 }
 
 function getCandleRows(item, view) {
-  if (view === 'daily') return (item.history ?? []).slice(-7)
+  if (view === 'daily') return (item.history ?? []).slice(-120)
   return (item.weekly ?? []).slice(-90)
 }
 
@@ -49,6 +49,15 @@ export function getValidCandleRows(item, view) {
 
 function buildCandleOption(item, view, selectedDate = '') {
   const clean = getValidCandleRows(item, view)
+  const dailyDefaultCount = 7
+  const dailyStart = clean.length > dailyDefaultCount
+    ? ((clean.length - dailyDefaultCount) / clean.length) * 100
+    : 0
+
+  const dataZoom = view === 'daily'
+    ? [{ type: 'inside', start: dailyStart, end: 100 }]
+    : [{ type: 'inside', start: 45, end: 100 }]
+
   return {
     animation: false,
     grid: { left: 58, right: 24, top: 24, bottom: 54 },
@@ -78,7 +87,7 @@ function buildCandleOption(item, view, selectedDate = '') {
       splitLine: { lineStyle: { color: '#edf1eb' } },
       axisLabel: { color: '#667069' }
     },
-    dataZoom: view === 'daily' ? [] : [{ type: 'inside', start: 45, end: 100 }],
+    dataZoom,
     series: [
       {
         name: item.name,

@@ -222,20 +222,21 @@ async function serveStockIndices(response) {
 
 async function serveStockSearch(url, response) {
   const query = (url.searchParams.get("q") || "").trim();
+  const marketScope = url.searchParams.get("market") === "hk" ? "hk" : "a";
   if (!query || query.length > 40 || /[<>{}\\]/.test(query)) {
     sendJson(response, 400, { error: "invalid query", rows: [] });
     return;
   }
 
   try {
-    const rows = await searchStocks(query);
+    const rows = await searchStocks(query, marketScope);
     sendJson(response, 200, {
       fetchedAt: new Date().toISOString(),
       source: "东方财富搜索",
       rows
     });
   } catch (error) {
-    const fallback = stockCandidateFromCode(query);
+    const fallback = stockCandidateFromCode(query, marketScope);
     if (fallback) {
       sendJson(response, 200, {
         fetchedAt: new Date().toISOString(),
@@ -252,7 +253,8 @@ async function serveStockSearch(url, response) {
 async function serveStockDetail(url, response) {
   const secidParam = (url.searchParams.get("secid") || "").trim();
   const codeParam = (url.searchParams.get("code") || "").trim();
-  const fallback = stockCandidateFromCode(codeParam);
+  const marketScope = url.searchParams.get("market") === "hk" ? "hk" : "a";
+  const fallback = stockCandidateFromCode(codeParam, marketScope);
   const secid = normalizeStockSecid(secidParam) || fallback?.secid;
 
   if (!secid) {
@@ -278,7 +280,7 @@ async function serveStockDetail(url, response) {
       source: "东方财富行情",
       quote,
       profile,
-      boards,
+      boards: boards.length ? boards : fallbackStockBoards(quote),
       klines: {
         intraday,
         daily,
@@ -291,7 +293,7 @@ async function serveStockDetail(url, response) {
   }
 }
 
-async function searchStocks(query) {
+async function searchStocks(query, marketScope = "a") {
   const target = new URL("https://searchapi.eastmoney.com/api/suggest/get");
   target.searchParams.set("input", query);
   target.searchParams.set("type", "14");
@@ -305,13 +307,13 @@ async function searchStocks(query) {
     ...(payload?.data ?? [])
   ];
   const rows = rawRows
-    .map(stockSearchCandidateFromRow)
+    .map((row) => stockSearchCandidateFromRow(row, marketScope))
     .filter(Boolean)
-    .filter((row) => isStockLikeCode(row.code))
+    .filter((row) => isSearchMarketMatch(row, marketScope))
     .slice(0, 10);
 
   if (rows.length) return rows;
-  const fallback = stockCandidateFromCode(query);
+  const fallback = stockCandidateFromCode(query, marketScope);
   return fallback ? [fallback] : [];
 }
 
@@ -351,7 +353,7 @@ async function fetchStockKlines(secid, klt, limit = 160) {
   target.searchParams.set("fields1", "f1,f2,f3,f4,f5,f6");
   target.searchParams.set("fields2", "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61");
   target.searchParams.set("klt", String(klt));
-  target.searchParams.set("fqt", "1");
+  target.searchParams.set("fqt", cleanSecid.startsWith("116.") ? "0" : "1");
   target.searchParams.set("beg", "0");
   target.searchParams.set("end", "20500101");
   target.searchParams.set("lmt", String(limit));
@@ -404,6 +406,7 @@ async function fetchCompanyProfile(secid) {
   const cleanSecid = normalizeStockSecid(secid);
   if (!cleanSecid) return null;
   const [market, code] = cleanSecid.split(".");
+  if (market === "116") return null;
   const prefix = code.startsWith("8") || code.startsWith("4") ? "BJ" : market === "1" ? "SH" : "SZ";
   const target = new URL("https://emweb.securities.eastmoney.com/PC_HSF10/CompanySurvey/PageAjax");
   target.searchParams.set("code", `${prefix}${code}`);
@@ -433,6 +436,7 @@ async function fetchCompanyProfile(secid) {
 }
 
 async function fetchStockBoards(secid) {
+  if (String(secid || "").startsWith("116.")) return [];
   const secucode = stockSecucode(secid);
   if (!secucode) return [];
   const target = new URL("https://datacenter.eastmoney.com/securities/api/data/v1/get");
@@ -467,6 +471,7 @@ function stockSecucode(secid) {
   const cleanSecid = normalizeStockSecid(secid);
   if (!cleanSecid) return "";
   const [market, code] = cleanSecid.split(".");
+  if (market === "116") return `${code}.HK`;
   const suffix = code.startsWith("8") || code.startsWith("4") ? "BJ" : market === "1" ? "SH" : "SZ";
   return `${code}.${suffix}`;
 }
@@ -478,10 +483,10 @@ function stockProfileCode(secid) {
   return `${suffix}${code}`;
 }
 
-function stockSearchCandidateFromRow(row) {
+function stockSearchCandidateFromRow(row, marketScope = "a") {
   const code = String(row.Code || row.SecurityCode || row.SECURITY_CODE || row.code || "").trim();
   const quoteId = String(row.QuoteID || row.QuoteIDStr || row.quoteId || row.secid || "").trim();
-  const secid = normalizeStockSecid(quoteId) || stockCandidateFromCode(code)?.secid;
+  const secid = normalizeStockSecid(quoteId) || stockCandidateFromCode(code, marketScope)?.secid;
   if (!code || !secid) return null;
   const name = String(row.Name || row.SecurityName || row.SECURITY_NAME_ABBR || row.name || code).trim();
   const market = secid.split(".")[0];
@@ -494,9 +499,21 @@ function stockSearchCandidateFromRow(row) {
   };
 }
 
-function stockCandidateFromCode(value) {
-  const code = String(value || "").trim().replace(/^(SH|SZ|BJ)/i, "");
-  if (!isStockLikeCode(code)) return null;
+function stockCandidateFromCode(value, marketScope = "a") {
+  const rawCode = String(value || "").trim().replace(/^(SH|SZ|BJ|HK)/i, "");
+  const code = marketScope === "hk" && /^\d{1,5}$/.test(rawCode) ? rawCode.padStart(5, "0") : rawCode;
+  if (marketScope === "hk") {
+    if (!isHongKongStockCode(code)) return null;
+    return {
+      secid: `116.${code}`,
+      code,
+      name: code,
+      exchange: "HK",
+      type: "港股"
+    };
+  }
+
+  if (!isAStockLikeCode(code)) return null;
   const market = code.startsWith("6") || code.startsWith("9") ? "1" : "0";
   return {
     secid: `${market}.${code}`,
@@ -511,15 +528,27 @@ function normalizeStockSecid(value) {
   const text = String(value || "").trim();
   const direct = text.match(/^([01])\.(\d{6})$/);
   if (direct) return `${direct[1]}.${direct[2]}`;
+  const hkDirect = text.match(/^116\.(\d{5})$/);
+  if (hkDirect) return `116.${hkDirect[1]}`;
   const code = text.replace(/^(SH|SZ|BJ)/i, "");
   return stockCandidateFromCode(code)?.secid ?? null;
 }
 
-function isStockLikeCode(code) {
+function isAStockLikeCode(code) {
   return /^[03468]\d{5}$/.test(String(code || ""));
 }
 
+function isHongKongStockCode(code) {
+  return /^\d{5}$/.test(String(code || ""));
+}
+
+function isSearchMarketMatch(row, marketScope) {
+  if (marketScope === "hk") return row.secid.startsWith("116.") && isHongKongStockCode(row.code);
+  return /^[01]\./.test(row.secid) && isAStockLikeCode(row.code) && row.type !== "基金";
+}
+
 function stockExchangeLabel(market, code) {
+  if (market === "116") return "HK";
   if (code?.startsWith("8") || code?.startsWith("4")) return "BJ";
   return market === "1" ? "SH" : "SZ";
 }
@@ -558,6 +587,17 @@ function normalizeStockQuote(row) {
     floatMarketCap2: toNumber(row.f117 ?? row.f21),
     timestamp: Number.isFinite(toNumber(row.f124)) ? new Date(toNumber(row.f124) * 1000).toISOString() : null
   };
+}
+
+function fallbackStockBoards(quote) {
+  if (!quote) return [];
+  if (quote.exchange === "HK") {
+    return [
+      { code: "HK", name: "港股", type: "市场", reason: "" },
+      { code: "HKEX", name: "香港交易所", type: "交易所", reason: "" }
+    ];
+  }
+  return quote.exchange ? [{ code: quote.exchange, name: `${quote.exchange} 市场`, type: "市场", reason: "" }] : [];
 }
 
 function parseStockKline(line) {

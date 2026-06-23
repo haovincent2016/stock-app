@@ -27,17 +27,35 @@
         <section class="stock-search-panel">
           <div class="stock-search-copy">
             <h2>股票搜索</h2>
-            <p>输入 A 股股票名称或代码，查询行情、K 线和基本资料。</p>
+            <p>输入股票名称或代码，查询行情、K 线和基本资料。</p>
           </div>
-          <div class="stock-search-box">
-            <el-input
-              v-model="query"
-              clearable
-              placeholder="例如：贵州茅台 / 600519 / 宁德时代"
-              size="large"
-              @keyup.enter="searchStock"
-            />
-            <el-button type="primary" :loading="searchLoading" size="large" @click="searchStock">搜索</el-button>
+          <div class="stock-search-forms">
+            <div class="stock-search-row">
+              <span>A 股</span>
+              <div class="stock-search-box">
+                <el-input
+                  v-model="query"
+                  clearable
+                  placeholder="例如：贵州茅台 / 600519 / 宁德时代"
+                  size="large"
+                  @keyup.enter="searchStock"
+                />
+                <el-button type="primary" :loading="searchLoading" size="large" @click="searchStock">搜索</el-button>
+              </div>
+            </div>
+            <div class="stock-search-row">
+              <span>港股</span>
+              <div class="stock-search-box">
+                <el-input
+                  v-model="hkQuery"
+                  clearable
+                  placeholder="例如：腾讯控股 / 00700 / 阿里巴巴-W"
+                  size="large"
+                  @keyup.enter="searchHongKongStock"
+                />
+                <el-button :loading="hkSearchLoading" size="large" @click="searchHongKongStock">搜港股</el-button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -45,7 +63,7 @@
 
         <section v-if="suggestions.length" class="stock-suggestion-panel">
           <div class="stock-suggestion-head">
-            <strong>搜索结果</strong>
+            <strong>{{ suggestionTitle }}</strong>
             <span>{{ suggestions.length }} 条</span>
           </div>
           <div class="stock-suggestion-list">
@@ -197,8 +215,11 @@ import { compactNumber, formatNumber, formatPct, formatSignedPct, changeClass, f
 const STOCK_STORAGE_KEY = 'stock_page_items_v1'
 
 const query = ref('')
+const hkQuery = ref('')
 const searchLoading = ref(false)
+const hkSearchLoading = ref(false)
 const searchError = ref('')
+const suggestionTitle = ref('搜索结果')
 const suggestions = ref([])
 const indexRows = ref([])
 const indexFetchedAt = ref('')
@@ -237,25 +258,36 @@ async function loadIndices() {
 }
 
 async function searchStock() {
-  const text = query.value.trim()
+  await searchByMarket(query.value, 'a')
+}
+
+async function searchHongKongStock() {
+  await searchByMarket(hkQuery.value, 'hk')
+}
+
+async function searchByMarket(rawQuery, market) {
+  const text = rawQuery.trim()
   if (!text) return
-  searchLoading.value = true
+  if (market === 'hk') hkSearchLoading.value = true
+  else searchLoading.value = true
   searchError.value = ''
   suggestions.value = []
+  suggestionTitle.value = market === 'hk' ? '港股搜索结果' : 'A 股搜索结果'
   try {
     const response = await axios.get('./api/stock-search', {
-      params: { q: text, ts: Date.now() }
+      params: { q: text, market, ts: Date.now() }
     })
     suggestions.value = response.data?.rows ?? []
     if (!suggestions.value.length) {
-      searchError.value = '没有找到匹配股票'
+      searchError.value = market === 'hk' ? '没有找到匹配港股' : '没有找到匹配 A 股'
       return
     }
     addStock(suggestions.value[0])
   } catch (error) {
     searchError.value = error.response?.data?.error || error.message || '股票搜索失败'
   } finally {
-    searchLoading.value = false
+    if (market === 'hk') hkSearchLoading.value = false
+    else searchLoading.value = false
   }
 }
 

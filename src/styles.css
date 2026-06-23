@@ -939,6 +939,30 @@ strong.limit-down {
   font-size: 13px;
 }
 
+.stock-search-forms {
+  display: grid;
+  gap: 8px;
+}
+
+.stock-search-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.stock-search-row > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  border-radius: var(--radius);
+  background: #fafafa;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .stock-search-box {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 92px;
@@ -1420,6 +1444,10 @@ strong.limit-down {
   }
 
   .stock-search-box {
+    grid-template-columns: 1fr;
+  }
+
+  .stock-search-row {
     grid-template-columns: 1fr;
   }
 
