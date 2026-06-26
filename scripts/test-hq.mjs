@@ -13,7 +13,7 @@ async function testFetchKline(symbol) {
 }
 
 (async () => {
-  await testFetchKline('JD2607');
   await testFetchKline('JD2608');
+  await testFetchKline('JD2609');
   await testFetchKline('JD0');
 })();

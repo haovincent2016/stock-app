@@ -14,16 +14,21 @@ const commodities = [
   { symbol: "CU0", name: "沪铜连续", category: "有色", exchange: "SHFE", digits: 0, limitPct: 0.10, query: "沪铜 铜库存 供需 期货" },
   { symbol: "AL0", name: "沪铝连续", category: "有色", exchange: "SHFE", digits: 0, limitPct: 0.10, query: "沪铝 电解铝 库存 供需" },
   { symbol: "AO0", name: "氧化铝连续", category: "有色", exchange: "SHFE", digits: 0, limitPct: 0.10, query: "氧化铝 期货 铝土矿 库存 供需" },
+  { symbol: "ZN0", name: "沪锌连续", category: "有色", exchange: "SHFE", digits: 0, limitPct: 0.10, query: "沪锌 锌锭 库存 供需 期货" },
   { symbol: "SS0", name: "不锈钢连续", category: "有色", exchange: "SHFE", digits: 0, limitPct: 0.07, query: "不锈钢 期货 镍铁 库存 供需", contracts: ["SS2607", "SS2608"] },
+  { symbol: "AG0", name: "沪银连续", category: "贵金属", exchange: "SHFE", digits: 0, limitPct: 0.17, query: "白银 沪银 期货 美联储 贵金属" },
   { symbol: "SC0", name: "原油连续", category: "能源", exchange: "INE", digits: 1, limitPct: 0.17, query: "原油 期货 EIA OPEC 供需 库存" },
   { symbol: "FU0", name: "燃油连续", category: "能源", exchange: "SHFE", digits: 0, limitPct: 0.17, query: "燃料油 期货 库存 供需 原油" },
+  { symbol: "BU0", name: "沥青连续", category: "能源", exchange: "SHFE", digits: 0, limitPct: 0.13, query: "沥青 期货 炼厂 库存 需求" },
   { symbol: "TA0", name: "PTA连续", category: "化工", exchange: "CZCE", digits: 0, limitPct: 0.11, query: "PTA 期货 开工率 库存 供需" },
   { symbol: "SA0", name: "纯碱连续", category: "化工", exchange: "CZCE", digits: 0, limitPct: 0.07, query: "纯碱 期货 库存 供需" },
   { symbol: "SH0", name: "烧碱连续", category: "化工", exchange: "CZCE", digits: 0, limitPct: 0.10, query: "烧碱 期货 库存 供需" },
   { symbol: "UR0", name: "尿素连续", category: "化工", exchange: "CZCE", digits: 0, limitPct: 0.07, query: "尿素 期货 农需 库存 供需" },
+  { symbol: "RU0", name: "橡胶连续", category: "化工", exchange: "SHFE", digits: 0, limitPct: 0.08, query: "天然橡胶 橡胶 期货 库存 轮胎 供需" },
+  { symbol: "L0", name: "塑料连续", category: "化工", exchange: "DCE", digits: 0, limitPct: 0.07, query: "塑料 LLDPE 期货 石化 库存 需求" },
   { symbol: "M0", name: "豆粕连续", category: "农产品", exchange: "DCE", digits: 0, limitPct: 0.06, query: "豆粕 大豆压榨 库存 供需 期货" },
   { symbol: "P0", name: "棕榈油连续", category: "农产品", exchange: "DCE", digits: 0, limitPct: 0.07, query: "棕榈油 马来西亚 库存 供需 期货" },
-  { symbol: "JD0", name: "鸡蛋连续", category: "农产品", exchange: "DCE", digits: 0, limitPct: 0.06, query: "鸡蛋 期货 现货 蛋鸡 存栏 供需", contracts: ["JD2607", "JD2608"] },
+  { symbol: "JD0", name: "鸡蛋连续", category: "农产品", exchange: "DCE", digits: 0, limitPct: 0.06, query: "鸡蛋 期货 现货 蛋鸡 存栏 供需", contracts: ["JD2608", "JD2609"] },
   { symbol: "CF0", name: "棉花连续", category: "农产品", exchange: "CZCE", digits: 0, limitPct: 0.06, query: "棉花 期货 供需 库存 美棉" },
   { symbol: "AU0", name: "沪金连续", category: "贵金属", exchange: "SHFE", digits: 2, limitPct: 0.17, query: "黄金 期货 美债 美联储 需求" }
 ];
@@ -48,13 +53,18 @@ const fallbackLimitRules = {
   CU0: { limitPct: 0.10, tickSize: 10 },
   AL0: { limitPct: 0.10, tickSize: 5 },
   AO0: { limitPct: 0.10, tickSize: 1 },
+  ZN0: { limitPct: 0.10, tickSize: 5 },
   SS0: { limitPct: 0.07, tickSize: 5 },
+  AG0: { limitPct: 0.17, tickSize: 1 },
   SC0: { limitPct: 0.17, tickSize: 0.1 },
   FU0: { limitPct: 0.17, tickSize: 1 },
+  BU0: { limitPct: 0.13, tickSize: 1 },
   TA0: { limitPct: 0.11, tickSize: 2 },
   SA0: { limitPct: 0.07, tickSize: 1 },
   SH0: { limitPct: 0.10, tickSize: 1 },
   UR0: { limitPct: 0.07, tickSize: 1 },
+  RU0: { limitPct: 0.08, tickSize: 5 },
+  L0: { limitPct: 0.07, tickSize: 1 },
   M0: { limitPct: 0.06, tickSize: 1 },
   P0: { limitPct: 0.07, tickSize: 2 },
   JD0: { limitPct: 0.06, tickSize: 1 },
@@ -81,13 +91,18 @@ const commodityKeywordMap = {
   CU0: ["沪铜", "精铜", "铜矿", "铜库存", "电解铜"],
   AL0: ["沪铝", "电解铝", "铝锭", "铝水", "铝库存"],
   AO0: ["氧化铝", "铝土矿", "氧化铝库存", "氧化铝期货"],
+  ZN0: ["沪锌", "锌锭", "锌矿", "锌库存", "精炼锌"],
   SS0: ["不锈钢", "304", "镍铁", "不锈钢库存", "不锈钢现货"],
+  AG0: ["白银", "沪银", "贵金属", "银价"],
   SC0: ["原油", "OPEC", "EIA", "成品油", "WTI", "布伦特"],
   FU0: ["燃料油", "燃油", "高硫燃料油", "低硫燃料油", "船燃", "保税燃料油"],
+  BU0: ["沥青", "石油沥青", "炼厂", "道路沥青"],
   TA0: ["PTA", "PX", "聚酯", "织造", "逸盛"],
   SA0: ["纯碱", "碱厂", "重碱", "轻碱"],
   SH0: ["烧碱", "液碱", "片碱", "氯碱"],
   UR0: ["尿素", "复合肥", "煤化工尿素", "尿素库存"],
+  RU0: ["天然橡胶", "橡胶", "轮胎", "青岛保税区", "胶水"],
+  L0: ["塑料", "LLDPE", "线性", "聚乙烯", "石化库存"],
   M0: ["豆粕", "大豆压榨", "油厂", "美豆", "豆粕库存"],
   P0: ["棕榈油", "棕油", "MPOB", "马来棕榈"],
   JD0: ["鸡蛋", "蛋鸡", "蛋价", "鸡蛋现货"],
@@ -103,13 +118,18 @@ const spotKeywordMap = {
   CU0: ["铜", "电解铜", "1#铜"],
   AL0: ["铝", "电解铝", "A00铝"],
   AO0: ["氧化铝"],
+  ZN0: ["锌", "锌锭", "0#锌"],
   SS0: ["不锈钢", "304不锈钢"],
+  AG0: ["白银", "银"],
   SC0: ["原油", "WTI原油", "布伦特"],
   FU0: ["燃料油", "燃油"],
+  BU0: ["沥青", "石油沥青"],
   TA0: ["PTA", "精对苯二甲酸"],
   SA0: ["纯碱", "重质纯碱"],
   SH0: ["烧碱", "片碱", "液碱"],
   UR0: ["尿素"],
+  RU0: ["天然橡胶", "橡胶"],
+  L0: ["LLDPE", "塑料", "线性低密度聚乙烯"],
   M0: ["豆粕"],
   P0: ["棕榈油"],
   JD0: ["鸡蛋"],
@@ -146,9 +166,17 @@ const fundamentalProfiles = {
     supply: ["铝土矿供应、矿石品位和进口到港影响氧化铝产量", "氧化铝厂检修、焙烧和环保约束影响开工", "厂库和港口库存决定现货流通宽松程度"],
     demand: ["电解铝运行产能决定氧化铝刚性需求", "铝厂补库节奏和长单执行影响成交活跃度", "电解铝利润变化会影响原料采购节奏"]
   },
+  ZN0: {
+    supply: ["锌矿加工费、冶炼检修和进口到港影响精炼锌供应", "交易所库存和社会库存反映流通货源压力", "矿端扰动和冶炼利润变化会改变供应弹性"],
+    demand: ["镀锌、压铸合金和氧化锌开工决定锌锭消费", "基建、汽车和家电订单影响终端需求", "下游原料库存和现货升贴水验证补库强弱"]
+  },
   SS0: {
     supply: ["不锈钢厂排产、检修和新增产能决定供应", "镍铁、铬铁和废不锈钢成本影响利润与开工", "无锡、佛山社会库存和厂库变化反映流通压力"],
     demand: ["地产、家电、机械和出口订单驱动消费", "下游加工厂开工和原料补库节奏影响成交", "终端补库窗口和现货升贴水验证需求强弱"]
+  },
+  AG0: {
+    supply: ["矿产银、再生银和进口流入影响实物供应", "金银比、内外盘价差和冶炼副产变化影响估值", "交易所库存和仓单变化反映可交割压力"],
+    demand: ["光伏、电工电子和饰品消费决定实物需求", "实际利率、美元和避险情绪驱动投资需求", "工业订单和贵金属资金配置影响价格弹性"]
   },
   SC0: {
     supply: ["OPEC+产量政策、美国页岩油和地缘扰动影响供应", "EIA库存、出口和炼厂开工反映供给压力", "进口成本和运费变化影响内盘估值"],
@@ -157,6 +185,10 @@ const fundamentalProfiles = {
   FU0: {
     supply: ["炼厂出料、进口到港和保税船燃库存影响供应", "高硫与低硫资源结构决定可交割压力", "原油成本和炼厂利润影响产出节奏"],
     demand: ["航运燃料需求和发电需求影响消费", "船燃加注量和运价变化反映终端活跃度", "替代燃料价差会改变采购偏好"]
+  },
+  BU0: {
+    supply: ["炼厂开工、检修和排产计划决定沥青供应", "厂库、社会库和区域货源流向反映供应压力", "原油成本和炼厂利润影响生产积极性"],
+    demand: ["道路施工、基建资金和天气决定沥青消费节奏", "南北方施工季切换会改变区域需求", "贸易商补库和出货速度验证终端承接"]
   },
   TA0: {
     supply: ["PTA装置开工、检修和新产能投放决定供应", "PX成本和加工差影响装置负荷", "社会库存和仓单压力体现供给宽松程度"],
@@ -173,6 +205,14 @@ const fundamentalProfiles = {
   UR0: {
     supply: ["煤头、气头装置开工和检修决定日产水平", "企业库存和港口库存反映供应压力", "出口政策和国际价差影响外流预期"],
     demand: ["农业追肥、复合肥开工和淡储决定需求节奏", "季节性农需窗口对价格弹性较强", "工业需求和复合肥库存影响采购强度"]
+  },
+  RU0: {
+    supply: ["国内外产区割胶、天气和胶水价格影响天然橡胶供应", "青岛保税区库存和交易所仓单反映流通压力", "进口到港和产区季节性扰动影响近端货源"],
+    demand: ["轮胎开工、汽车产销和出口订单决定橡胶需求", "全钢胎和半钢胎库存变化影响原料补库", "终端运输和替换胎需求验证消费韧性"]
+  },
+  L0: {
+    supply: ["石化装置开工、检修和新增产能决定塑料供应", "煤化工、油化工利润和进口窗口影响货源结构", "石化库存和港口库存反映流通压力"],
+    demand: ["农膜、包装膜和管材订单决定塑料消费", "下游开工和成品库存影响原料采购节奏", "季节性农膜旺季和电商包装需求改变需求弹性"]
   },
   M0: {
     supply: ["进口大豆到港、油厂开机和压榨量决定豆粕供应", "豆粕库存和未执行合同反映现货压力", "美豆天气和南美供应影响成本端"],
@@ -1313,7 +1353,11 @@ main().catch(async (error) => {
 function buildFallbackPayload(error) {
   const today = new Date().toISOString().slice(0, 10);
   const seeded = commodities.map((item, index) => {
-    const base = [3350, 820, 1450, 2050, 78000, 20500, 3300, 612, 3300, 4860, 1680, 1950, 2100, 3020, 7480, 3600, 16000, 560][index];
+    const base = [
+      3350, 820, 1450, 2050, 78000, 20500, 3300, 23500,
+      13500, 8200, 612, 3300, 3600, 4860, 1680, 2600,
+      1950, 15000, 8200, 3020, 7480, 3600, 16000, 560
+    ][index];
     const history = Array.from({ length: 80 }, (_, day) => {
       const drift = Math.sin((day + index) / 4) * base * 0.018 + (day - 40) * base * 0.001;
       const close = base + drift;
