@@ -294,6 +294,82 @@
               </ul>
             </div>
 
+            <div class="wave-ai-card chanlun-card">
+              <div class="ai-card-head">
+                <div class="ai-card-title">
+                  <strong>缠论 AI 分析</strong>
+                  <span>{{ chanlunAnalysis.scope }}</span>
+                </div>
+                <span class="tone-pill" :class="chanlunAnalysis.biasClass">{{ chanlunAnalysis.label }}</span>
+              </div>
+              <p class="ai-summary">{{ chanlunAnalysis.summary }}</p>
+              <div v-if="chanlunAnalysis.sketch" class="wave-sketch" aria-label="缠论笔与中枢走势">
+                <div class="wave-sketch-scale">
+                  <span>{{ chanlunAnalysis.sketch.highLabel }}</span>
+                  <span>{{ chanlunAnalysis.sketch.lowLabel }}</span>
+                </div>
+                <div class="wave-sketch-canvas">
+                  <svg viewBox="0 0 100 64" preserveAspectRatio="none">
+                    <line
+                      v-for="line in chanlunAnalysis.sketch.gridLines"
+                      :key="line"
+                      class="wave-sketch-grid"
+                      x1="0"
+                      x2="100"
+                      :y1="line"
+                      :y2="line"
+                    />
+                    <rect
+                      v-for="(zhongshu, idx) in chanlunAnalysis.sketch.zhongshuBoxes"
+                      :key="'zs-' + idx"
+                      class="chanlun-zhongshu-box"
+                      :x="zhongshu.x"
+                      :y="zhongshu.y"
+                      :width="zhongshu.width"
+                      :height="zhongshu.height"
+                    />
+                    <polyline class="wave-sketch-line" :points="chanlunAnalysis.sketch.linePoints" />
+                    <circle
+                      v-for="point in chanlunAnalysis.sketch.nodes"
+                      :key="point.key"
+                      class="wave-sketch-dot"
+                      :class="point.class"
+                      :cx="point.x"
+                      :cy="point.y"
+                      r="2.2"
+                    />
+                  </svg>
+                  <div
+                    v-for="point in chanlunAnalysis.sketch.nodes"
+                    :key="point.key + '-label'"
+                    class="wave-sketch-marker"
+                    :class="point.class"
+                    :style="{ left: point.left, top: point.top }"
+                  >
+                    <strong>{{ point.label }}</strong>
+                    <span>{{ point.price }}</span>
+                  </div>
+                </div>
+              </div>
+              <div v-if="chanlunAnalysis.points.length" class="wave-path" aria-label="缠论分笔路径">
+                <div v-for="point in chanlunAnalysis.points" :key="point.key" class="wave-point" :class="point.class">
+                  <span>{{ point.label }}</span>
+                  <strong>{{ point.price }}</strong>
+                  <em>{{ point.date }}</em>
+                </div>
+              </div>
+              <div class="ai-signal-grid wave-signal-grid">
+                <div v-for="signal in chanlunAnalysis.signals" :key="signal.label">
+                  <span>{{ signal.label }}</span>
+                  <strong :class="signal.class">{{ signal.value }}</strong>
+                  <em>{{ signal.meta }}</em>
+                </div>
+              </div>
+              <ul class="ai-detail-list wave-detail-list">
+                <li v-for="(note, idx) in chanlunAnalysis.details" :key="idx">{{ note }}</li>
+              </ul>
+            </div>
+
             <div class="month-card">
               <div class="month-card-head">
                 <div class="month-card-title">
@@ -554,6 +630,14 @@ const waveAiAnalysis = computed(() =>
     priceDigits: displayItem.value?.priceDigits ?? 0,
     williamsR: latestWilliamsR.value,
     atr: displayItem.value?.metrics?.atr14
+  })
+)
+const chanlunAnalysis = computed(() =>
+  buildChanlunAnalysis({
+    history: displayItem.value?.history ?? [],
+    current: latestDaily.value,
+    priceDigits: displayItem.value?.priceDigits ?? 0,
+    williamsR: latestWilliamsR.value
   })
 )
 const bullBearAnalysis = computed(() =>
@@ -1777,5 +1861,362 @@ function williamsText(value) {
 
 function monthSeed(month) {
   return Math.max(0, Number(month?.month?.slice(5, 7)) - 1 || 0)
+}
+
+// ── 缠论分析 ──────────────────────────────────────────────
+
+function buildChanlunAnalysis({ history, current, priceDigits, williamsR }) {
+  const allRows = (history ?? [])
+    .map((row) => ({
+      date: row.date || row.endDate,
+      high: Number(row.high),
+      low: Number(row.low),
+      close: Number(row.close),
+      open: Number(row.open)
+    }))
+    .filter((row) => Number.isFinite(row.high) && Number.isFinite(row.low))
+
+  const live = current && Number.isFinite(current.high)
+    ? { date: current.date || current.endDate || '今日', high: Number(current.high), low: Number(current.low), close: Number(current.close), open: Number(current.open) }
+    : null
+  if (live) {
+    const idx = allRows.findIndex((row) => row.date === live.date)
+    if (idx >= 0) allRows[idx] = live
+    else allRows.push(live)
+  }
+
+  const rows = allRows.slice(-14)
+  if (rows.length < 5) {
+    return emptyChanlunAnalysis('近两周 K 线不足 5 根，无法进行缠论分析。')
+  }
+
+  const merged = mergeKlines(rows)
+  const bis = detectBis(merged)
+  if (bis.length < 2) {
+    return emptyChanlunAnalysis('近两周未形成有效的缠论分笔，当前以单边走势或窄幅震荡为主。')
+  }
+
+  const zhongshus = detectZhongshu(bis)
+  const lastPrice = rows.at(-1).close
+  const trend = chanlunTrend(bis, zhongshus, lastPrice)
+  const buySellPoint = detectBuySellPoint(bis, zhongshus, lastPrice, trend)
+  const sketch = buildChanlunSketch(bis, zhongshus, priceDigits, merged)
+  const points = buildChanlunPoints(bis, priceDigits)
+  const confidence = chanlunConfidence(bis, zhongshus, merged)
+
+  const scope = `近 ${rows.length} 根日 K（约两周）`
+  const direction = trend === 'up' ? '上行' : trend === 'down' ? '下行' : '震荡'
+  const summary = buildChanlunSummary(bis, zhongshus, trend, buySellPoint, lastPrice, priceDigits)
+
+  return {
+    scope,
+    label: buySellPoint.label || `${direction}趋势`,
+    biasClass: buySellPoint.biasClass || (trend === 'up' ? 'tight' : trend === 'down' ? 'loose' : 'neutral'),
+    summary,
+    sketch,
+    points,
+    signals: [
+      { label: '当前趋势', value: direction, meta: trend === 'up' ? '分笔高低点上移' : trend === 'down' ? '分笔高低点下移' : '中枢震荡', class: trend === 'up' ? 'up' : trend === 'down' ? 'down' : 'flat' },
+      { label: '中枢状态', value: zhongshus.length ? (zhongshus.at(-1).broken ? '已突破' : '震荡中') : '无中枢', meta: zhongshus.length ? `ZG=${formatNumber(zhongshus.at(-1).zg, priceDigits)} ZD=${formatNumber(zhongshus.at(-1).zd, priceDigits)}` : '笔数不足', class: zhongshus.length && zhongshus.at(-1).broken ? (trend === 'up' ? 'up' : 'down') : 'flat' },
+      { label: '买卖点', value: buySellPoint.value, meta: buySellPoint.meta, class: buySellPoint.class },
+      { label: '可信度', value: confidence.value, meta: confidence.meta, class: confidence.class }
+    ],
+    details: buildChanlunDetails(bis, zhongshus, trend, buySellPoint, merged, priceDigits, williamsR)
+  }
+}
+
+function mergeKlines(rows) {
+  if (!rows.length) return []
+  const result = [{ ...rows[0], dir: 0, index: 0 }]
+  for (let i = 1; i < rows.length; i++) {
+    const prev = result.at(-1)
+    const cur = rows[i]
+    const hasInclusion = (cur.high <= prev.high && cur.low >= prev.low) || (cur.high >= prev.high && cur.low <= prev.low)
+    if (!hasInclusion) {
+      result.push({ ...cur, dir: prev.dir, index: result.length })
+      continue
+    }
+    if (prev.dir >= 0) {
+      prev.high = Math.max(prev.high, cur.high)
+      prev.low = Math.max(prev.low, cur.low)
+    } else {
+      prev.high = Math.min(prev.high, cur.high)
+      prev.low = Math.min(prev.low, cur.low)
+    }
+    prev.date = cur.date
+  }
+  for (let i = 1; i < result.length; i++) {
+    if (result[i].high > result[i - 1].high && result[i].low > result[i - 1].low) result[i].dir = 1
+    else if (result[i].high < result[i - 1].high && result[i].low < result[i - 1].low) result[i].dir = -1
+    else result[i].dir = result[i - 1].dir
+  }
+  return result
+}
+
+function detectBis(merged) {
+  const extremes = []
+  for (let i = 1; i < merged.length - 1; i++) {
+    const prev = merged[i - 1]
+    const cur = merged[i]
+    const next = merged[i + 1]
+    if (cur.high > prev.high && cur.high > next.high && cur.high >= Math.max(prev.high, next.high)) {
+      extremes.push({ type: 'top', price: cur.high, date: cur.date, index: i })
+    }
+    if (cur.low < prev.low && cur.low < next.low && cur.low <= Math.min(prev.low, next.low)) {
+      extremes.push({ type: 'bottom', price: cur.low, date: cur.date, index: i })
+    }
+  }
+  const cleaned = []
+  for (const ext of extremes) {
+    const lastExt = cleaned.at(-1)
+    if (lastExt && lastExt.type === ext.type) {
+      if (ext.type === 'top' && ext.price > lastExt.price) cleaned[cleaned.length - 1] = ext
+      if (ext.type === 'bottom' && ext.price < lastExt.price) cleaned[cleaned.length - 1] = ext
+    } else {
+      cleaned.push(ext)
+    }
+  }
+  const bis = []
+  for (let i = 0; i < cleaned.length - 1; i++) {
+    const start = cleaned[i]
+    const end = cleaned[i + 1]
+    const direction = start.type === 'bottom' ? 'up' : 'down'
+    bis.push({
+      start,
+      end,
+      direction,
+      change: end.price - start.price,
+      changePct: start.price ? (end.price - start.price) / start.price : 0
+    })
+  }
+  return bis
+}
+
+function detectZhongshu(bis) {
+  if (bis.length < 3) return []
+  const zhongshus = []
+  for (let i = 0; i <= bis.length - 3; i++) {
+    const b1 = bis[i]
+    const b2 = bis[i + 1]
+    const b3 = bis[i + 2]
+    const overlapHigh = Math.min(b1.end.price, b3.end.price)
+    const overlapLow = Math.max(b1.start.price, b3.start.price)
+    if (overlapHigh > overlapLow) {
+      const zg = overlapHigh
+      const zd = overlapLow
+      let broken = false
+      let breakDir = null
+      for (let j = i + 3; j < bis.length; j++) {
+        if (bis[j].end.price > zg) { broken = true; breakDir = 'up'; break }
+        if (bis[j].end.price < zd) { broken = true; breakDir = 'down'; break }
+      }
+      zhongshus.push({
+        zg, zd, zz: (zg + zd) / 2,
+        startBi: i, endBi: i + 2,
+        broken, breakDir,
+        width: zg - zd
+      })
+    }
+  }
+  return zhongshus
+}
+
+function chanlunTrend(bis, zhongshus, lastPrice) {
+  if (!bis.length) return 'flat'
+  const lastZhongshu = zhongshus.at(-1)
+  if (lastZhongshu && !lastZhongshu.broken) {
+    if (lastPrice > lastZhongshu.zz) return 'up'
+    if (lastPrice < lastZhongshu.zz) return 'down'
+    return 'flat'
+  }
+  if (lastZhongshu && lastZhongshu.broken) return lastZhongshu.breakDir || 'flat'
+  const lastBi = bis.at(-1)
+  if (lastBi.direction === 'up') {
+    const tops = bis.filter(b => b.direction === 'up').map(b => b.end.price)
+    const bottoms = bis.filter(b => b.direction === 'down').map(b => b.end.price)
+    if (tops.length >= 2 && bottoms.length >= 2 && tops.at(-1) > tops.at(-2) && bottoms.at(-1) > bottoms.at(-2)) return 'up'
+  }
+  if (lastBi.direction === 'down') {
+    const tops = bis.filter(b => b.direction === 'up').map(b => b.end.price)
+    const bottoms = bis.filter(b => b.direction === 'down').map(b => b.end.price)
+    if (tops.length >= 2 && bottoms.length >= 2 && tops.at(-1) < tops.at(-2) && bottoms.at(-1) < bottoms.at(-2)) return 'down'
+  }
+  return 'flat'
+}
+
+function detectBuySellPoint(bis, zhongshus, lastPrice, trend) {
+  if (!zhongshus.length) {
+    return { value: '观望', meta: '中枢未形成', class: 'flat', label: '', biasClass: 'neutral' }
+  }
+  const zs = zhongshus.at(-1)
+  if (!zs.broken) {
+    if (lastPrice <= zs.zd * 1.005 && lastPrice >= zs.zd * 0.995) {
+      return { value: '一买', meta: '价格触及中枢下沿', class: 'up', label: '一买信号', biasClass: 'tight' }
+    }
+    if (lastPrice >= zs.zg * 0.995 && lastPrice <= zs.zg * 1.005) {
+      return { value: '一卖', meta: '价格触及中枢上沿', class: 'down', label: '一卖信号', biasClass: 'loose' }
+    }
+    return { value: '观望', meta: `中枢内震荡 [${formatNumber(zs.zd, 0)}, ${formatNumber(zs.zg, 0)}]`, class: 'flat', label: '', biasClass: 'neutral' }
+  }
+  if (zs.breakDir === 'up') {
+    if (lastPrice >= zs.zg && lastPrice <= zs.zg * 1.02) {
+      return { value: '二买', meta: '突破中枢上沿回踩', class: 'up', label: '二买信号', biasClass: 'tight' }
+    }
+    if (lastPrice > zs.zg * 1.05) {
+      return { value: '三买', meta: '远离中枢上沿加速', class: 'up', label: '三买信号', biasClass: 'tight' }
+    }
+    return { value: '持多', meta: '中枢上移趋势中', class: 'up', label: '多头延续', biasClass: 'tight' }
+  }
+  if (zs.breakDir === 'down') {
+    if (lastPrice <= zs.zd && lastPrice >= zs.zd * 0.98) {
+      return { value: '二卖', meta: '跌破中枢下沿反抽', class: 'down', label: '二卖信号', biasClass: 'loose' }
+    }
+    if (lastPrice < zs.zd * 0.95) {
+      return { value: '三卖', meta: '远离中枢下沿加速', class: 'down', label: '三卖信号', biasClass: 'loose' }
+    }
+    return { value: '持空', meta: '中枢下移趋势中', class: 'down', label: '空头延续', biasClass: 'loose' }
+  }
+  return { value: '观望', meta: '趋势待确认', class: 'flat', label: '', biasClass: 'neutral' }
+}
+
+function chanlunConfidence(bis, zhongshus, merged) {
+  let score = 0
+  if (bis.length >= 4) score += 1
+  if (bis.length >= 6) score += 1
+  if (zhongshus.length >= 1) score += 1
+  if (merged.length >= 8) score += 1
+  if (score >= 3) return { value: '较高', meta: '笔与中枢结构清晰', class: 'up' }
+  if (score >= 2) return { value: '中等', meta: '结构基本成型', class: 'flat' }
+  return { value: '偏低', meta: '样本偏少', class: 'down' }
+}
+
+function buildChanlunSketch(bis, zhongshus, priceDigits, merged) {
+  if (!bis.length) return null
+  const allPoints = bis.flatMap(b => [b.start, b.end])
+  const prices = allPoints.map(p => p.price)
+  const high = Math.max(...prices)
+  const low = Math.min(...prices)
+  const span = Math.max(high - low, Math.abs(high) * 0.01, 1)
+  const paddedHigh = high + span * 0.15
+  const paddedLow = low - span * 0.15
+  const paddedSpan = paddedHigh - paddedLow
+  const totalBars = merged.length || allPoints.length
+  const denominator = Math.max(1, totalBars - 1)
+
+  const nodes = allPoints.map((point, index) => {
+    const x = (point.index / denominator) * 84 + 8
+    const y = ((paddedHigh - point.price) / paddedSpan) * 48 + 8
+    return {
+      key: `cl-${index}`,
+      label: point.type === 'top' ? `顶${index}` : `底${index}`,
+      price: formatNumber(point.price, priceDigits),
+      x: roundChartCoord(x),
+      y: roundChartCoord(y),
+      left: `${roundChartCoord(x)}%`,
+      top: `${roundChartCoord((y / 64) * 100)}%`,
+      class: point.type === 'top' ? 'pivot-high' : 'pivot-low'
+    }
+  })
+  const linePoints = nodes.map(n => `${n.x},${n.y}`).join(' ')
+
+  const zhongshuBoxes = zhongshus.map(zs => {
+    const startBi = bis[zs.startBi]
+    const endBi = bis[zs.endBi]
+    if (!startBi || !endBi) return null
+    const x1 = (startBi.start.index / denominator) * 84 + 8
+    const x2 = (endBi.end.index / denominator) * 84 + 8
+    const y1 = ((paddedHigh - zs.zg) / paddedSpan) * 48 + 8
+    const y2 = ((paddedHigh - zs.zd) / paddedSpan) * 48 + 8
+    return {
+      x: roundChartCoord(x1),
+      y: roundChartCoord(Math.min(y1, y2)),
+      width: roundChartCoord(x2 - x1),
+      height: roundChartCoord(Math.abs(y2 - y1))
+    }
+  }).filter(Boolean)
+
+  return {
+    highLabel: formatNumber(high, priceDigits),
+    lowLabel: formatNumber(low, priceDigits),
+    gridLines: [14, 32, 50],
+    linePoints,
+    zhongshuBoxes,
+    nodes
+  }
+}
+
+function buildChanlunPoints(bis, priceDigits) {
+  const points = []
+  bis.forEach((bi, idx) => {
+    if (idx === 0) {
+      points.push({
+        key: `cl-start-${idx}`,
+        label: bi.start.type === 'top' ? '顶分型' : '底分型',
+        price: formatNumber(bi.start.price, priceDigits),
+        date: dateDayLabel(bi.start.date),
+        class: bi.start.type === 'top' ? 'pivot-high' : 'pivot-low'
+      })
+    }
+    points.push({
+      key: `cl-end-${idx}`,
+      label: bi.end.type === 'top' ? '顶分型' : '底分型',
+      price: formatNumber(bi.end.price, priceDigits),
+      date: dateDayLabel(bi.end.date),
+      class: bi.end.type === 'top' ? 'pivot-high' : 'pivot-low'
+    })
+  })
+  return points
+}
+
+function buildChanlunSummary(bis, zhongshus, trend, buySellPoint, lastPrice, priceDigits) {
+  const dirText = trend === 'up' ? '上行' : trend === 'down' ? '下行' : '震荡'
+  const biCount = bis.length
+  const zsCount = zhongshus.length
+  let summary = `近两周形成 ${biCount} 笔`
+  if (zsCount) {
+    const zs = zhongshus.at(-1)
+    summary += `、${zsCount} 个中枢（最新中枢区间 ${formatNumber(zs.zd, priceDigits)} ~ ${formatNumber(zs.zg, priceDigits)}${zs.broken ? '，已突破' : '，震荡中'}）`
+  } else {
+    summary += '，尚未形成中枢'
+  }
+  summary += `，当前趋势${dirText}。`
+  if (buySellPoint.label) {
+    summary += ` 缠论买卖点：${buySellPoint.label}（${buySellPoint.meta}）。`
+  }
+  return summary
+}
+
+function buildChanlunDetails(bis, zhongshus, trend, buySellPoint, merged, priceDigits, williamsR) {
+  const details = []
+  details.push(`【K线合并】近两周14根K线经包含关系处理后，剩余 ${merged.length} 根有效K线作为分型基础。`)
+  details.push(`【分笔】共识别 ${bis.length} 笔。${bis.map((b, i) => `第${i + 1}笔${b.direction === 'up' ? '向上' : '向下'} ${formatNumber(b.start.price, priceDigits)}→${formatNumber(b.end.price, priceDigits)}（${formatSignedPct(b.changePct)}）`).join('；')}。`)
+  if (zhongshus.length) {
+    details.push(`【中枢】共 ${zhongshus.length} 个中枢。${zhongshus.map((zs, i) => `第${i + 1}个 ZG=${formatNumber(zs.zg, priceDigits)} ZD=${formatNumber(zs.zd, priceDigits)}${zs.broken ? `，已向${zs.breakDir === 'up' ? '上' : '下'}突破` : '，震荡中'}`).join('；')}。`)
+  } else {
+    details.push('【中枢】当前笔数不足以形成中枢，若后续出现3笔重叠将构成第一个中枢。')
+  }
+  const dirText = trend === 'up' ? '上行（高低点不断上移）' : trend === 'down' ? '下行（高低点不断下移）' : '震荡（中枢内反复）'
+  details.push(`【趋势判断】${dirText}。${trend === 'up' ? '多头格局，逢低做多为主' : trend === 'down' ? '空头格局，逢高做空为主' : '中枢震荡，高抛低吸'}。`)
+  details.push(`【买卖点】${buySellPoint.label || '暂无明确买卖点'}：${buySellPoint.meta}。`)
+  details.push(`【指标辅助】W%R ${Number.isFinite(williamsR) ? williamsR.toFixed(1) : '--'}（${williamsText(williamsR)}），结合缠论买卖点综合判断。`)
+  return details
+}
+
+function emptyChanlunAnalysis(summary) {
+  return {
+    scope: '缠论分析',
+    label: '等待数据',
+    biasClass: 'neutral',
+    summary,
+    sketch: null,
+    points: [],
+    signals: [
+      { label: '当前趋势', value: '--', meta: '数据不足', class: 'flat' },
+      { label: '中枢状态', value: '--', meta: '等待笔形成', class: 'flat' },
+      { label: '买卖点', value: '观望', meta: '结构不足', class: 'flat' },
+      { label: '可信度', value: '低', meta: '样本不足', class: 'flat' }
+    ],
+    details: ['等待更多日 K 数据后，再给出缠论分笔、中枢和买卖点分析。']
+  }
 }
 </script>

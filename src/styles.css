@@ -2106,6 +2106,340 @@ strong.limit-down {
   background: var(--card);
 }
 
+.simulator-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 14px;
+}
+
+.simulator-standalone {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 16px;
+  margin: 16px 0;
+}
+
+.sim-search-row {
+  display: flex;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.sim-suggestions {
+  margin-bottom: 12px;
+}
+
+.sim-selected-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.sim-selected-info h3 {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.sim-selected-info p {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.sim-selected-info .sim-current-price {
+  font-size: 24px;
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+.sim-selected-info .sim-current-price em {
+  font-size: 14px;
+  font-style: normal;
+  margin-left: 8px;
+}
+
+.sim-fetched-at {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.sim-summary {
+  margin: 12px 0;
+  padding: 14px;
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.sim-summary-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.sim-summary-metrics article {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: center;
+}
+
+.sim-summary-metrics article span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.sim-summary-metrics article strong {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.sim-daily-row {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.sim-position-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.sim-position-item {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--card);
+}
+
+.sim-pos-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.sim-pos-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sim-pos-info strong {
+  font-size: 15px;
+}
+
+.sim-pos-info span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.sim-pos-body {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.sim-pos-body .sim-inputs {
+  flex: 0 0 200px;
+}
+
+.sim-pos-metrics {
+  flex: 1;
+  min-width: 240px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.sim-pos-metrics article {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.sim-pos-metrics article span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.sim-pos-metrics article strong {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+@media (max-width: 600px) {
+  .sim-pos-body {
+    flex-direction: column;
+  }
+  .sim-pos-body .sim-inputs {
+    flex: 1 1 auto;
+    flex-direction: row;
+  }
+  .sim-pos-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .sim-summary-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.simulator-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.simulator-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.simulator-title strong {
+  font-size: 15px;
+}
+
+.simulator-title span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.simulator-body {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.sim-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 0 0 200px;
+}
+
+.sim-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sim-field span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.sim-field input {
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+  background: var(--bg);
+  color: var(--ink);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.sim-field input:focus {
+  border-color: var(--blue);
+}
+
+.sim-result {
+  flex: 1;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sim-price-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.sim-price-row span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.sim-current-price {
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.sim-current-price em {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+  font-style: normal;
+}
+
+.sim-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.sim-metrics article {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.sim-metrics article span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.sim-metrics article strong {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.sim-hint {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+@media (max-width: 600px) {
+  .simulator-body {
+    flex-direction: column;
+  }
+  .sim-inputs {
+    flex: 1 1 auto;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .sim-field {
+    flex: 1 1 120px;
+  }
+  .sim-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
 .bull-bear-columns {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2233,6 +2567,14 @@ strong.limit-down {
 .wave-sketch-area {
   fill: rgba(5, 109, 232, 0.06);
   stroke: none;
+}
+
+.chanlun-zhongshu-box {
+  fill: rgba(255, 165, 0, 0.1);
+  stroke: rgba(255, 165, 0, 0.4);
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+  vector-effect: non-scaling-stroke;
 }
 
 .wave-sketch-line {
